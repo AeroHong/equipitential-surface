@@ -10,6 +10,7 @@ import ProfileSetup from './pages/student/ProfileSetup.jsx'
 import Step1Input from './pages/student/Step1Input.jsx'
 import Step2Drawing from './pages/student/Step2Drawing.jsx'
 import Step3Result from './pages/student/Step3Result.jsx'
+import Step4Discussion from './pages/student/Step4Discussion.jsx'
 import Dashboard from './pages/admin/Dashboard.jsx'
 import StudentView from './pages/admin/StudentView.jsx'
 import SetupAdmin from './pages/SetupAdmin.jsx'
@@ -171,6 +172,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <Step3Result />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/student/session/:sessionId/step4"
+            element={
+              <RequireAuth>
+                <Step4Discussion />
               </RequireAuth>
             }
           />

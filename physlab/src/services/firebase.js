@@ -76,16 +76,27 @@ export async function updateStep(sessionId, step) {
 }
 
 /**
- * 드로잉 및 점수 저장
+ * 드로잉 저장 (제출)
  * @param {string} sessionId
  * @param {Array} drawnLines
- * @param {number} score
  */
-export async function saveDrawingResult(sessionId, drawnLines, score) {
+export async function saveDrawingResult(sessionId, drawnLines) {
   await updateDoc(doc(db, 'sessions', sessionId), {
     drawnLines,
-    score,
     step: 3,
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 토론 답변 저장
+ * @param {string} sessionId
+ * @param {object} answers - { q1: "...", q2: "...", ... }
+ */
+export async function saveAnswers(sessionId, answers) {
+  await updateDoc(doc(db, 'sessions', sessionId), {
+    answers,
+    step: 4,
     updatedAt: serverTimestamp()
   })
 }

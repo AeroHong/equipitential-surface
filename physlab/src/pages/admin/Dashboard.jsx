@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
 import { auth } from '../../firebase.js'
 import { useAuth } from '../../App.jsx'
 import { subscribeAllStudents, subscribeAllSessions, subscribeStudentSessions, deleteStudent } from '../../services/firebase.js'
+import { DISCUSSION_QUESTIONS } from '../student/Step4Discussion.jsx'
 import EquipotentialMap from '../../components/EquipotentialMap.jsx'
 import Grid8x8 from '../../components/Grid8x8.jsx'
 
@@ -85,15 +86,7 @@ function StudentCard({ student, sessions, onClick, onDelete }) {
                   : '미시작'
 
   return (
-    <div className="relative group">
-      {/* 삭제 버튼 (hover 시 표시) */}
-      <button
-        onClick={(e) => { e.stopPropagation(); onDelete && onDelete() }}
-        className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-red-100 text-red-500 hover:bg-red-500 hover:text-white flex items-center justify-center text-xs font-bold opacity-0 group-hover:opacity-100 transition-all"
-        title={`${student.name} 학생 삭제`}
-      >
-        ✕
-      </button>
+    <div className="relative">
     <button
       onClick={onClick}
       className={[
@@ -172,6 +165,15 @@ function StudentCard({ student, sessions, onClick, onDelete }) {
         </span>
         <span className="text-xs text-gray-400">{latest ? formatTime(latest.updatedAt) : '—'}</span>
       </div>
+    </button>
+
+    {/* 삭제 버튼 (카드 우하단, 항상 표시) */}
+    <button
+      onClick={(e) => { e.stopPropagation(); onDelete && onDelete() }}
+      className="absolute bottom-3 right-3 z-10 text-xs text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg px-2 py-1 transition-all font-medium border border-transparent hover:border-red-200"
+      title={`${student.name} 학생 삭제`}
+    >
+      삭제
     </button>
     </div>
   )
@@ -298,8 +300,21 @@ function DetailPanel({ student, onClose, onFullPage }) {
                   </div>
                 )}
 
-                {session.score != null && (
-                  <p className="text-xs text-purple-600 font-semibold mt-2">수직도 점수: {session.score}점</p>
+                {/* 토론 답변 */}
+                {session.answers && Object.keys(session.answers).length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs font-semibold text-indigo-700 mb-2">💬 토론 답변</p>
+                    {DISCUSSION_QUESTIONS.map((q, idx) => {
+                      const ans = session.answers[q.id]
+                      if (!ans?.trim()) return null
+                      return (
+                        <div key={q.id} className="mb-2">
+                          <p className="text-xs text-gray-500 font-medium">Q{idx + 1}. {q.text.slice(0, 40)}...</p>
+                          <p className="text-xs text-gray-700 mt-0.5 bg-indigo-50 rounded-lg p-2">{ans}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             )

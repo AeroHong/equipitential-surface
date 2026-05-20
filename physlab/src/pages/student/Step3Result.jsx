@@ -20,7 +20,6 @@ export default function Step3Result() {
       if (!s) { navigate('/student'); return }
       setSession(s)
 
-      // 다른 실험 타입의 세션 찾기 (비교용)
       if (user) {
         const allSessions = await getStudentSessions(user.uid)
         const otherType = s.experimentType === 'point_electrode' ? 'line_electrode' : 'point_electrode'
@@ -35,7 +34,6 @@ export default function Step3Result() {
     load()
   }, [sessionId, user])
 
-  // 반응형 차트 크기
   useEffect(() => {
     function updateSize() {
       const w = Math.min(window.innerWidth - 32, 900)
@@ -61,11 +59,6 @@ export default function Step3Result() {
   const EXP_LABEL = session?.experimentType === 'line_electrode' ? '실험 2 — 선전극' : '실험 1 — 점전극'
   const EXP_LABEL_OTHER = otherSession?.experimentType === 'line_electrode' ? '실험 2 — 선전극' : '실험 1 — 점전극'
 
-  const scoreColor =
-    session?.score >= 80 ? 'text-green-600' :
-    session?.score >= 60 ? 'text-yellow-600' :
-    session?.score !== null ? 'text-red-600' : 'text-gray-400'
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* 헤더 */}
@@ -85,25 +78,24 @@ export default function Step3Result() {
             <span className="text-xs text-gray-500">3D 결과</span>
           </div>
         </div>
-        {session?.score !== null && session?.score !== undefined && (
-          <div className="ml-auto text-right">
-            <p className="text-xs text-gray-500">전기력선 점수</p>
-            <p className={`text-xl font-black ${scoreColor}`}>{session.score}점</p>
-          </div>
-        )}
       </header>
 
-      {/* 진행 단계 표시 */}
+      {/* 진행 단계 */}
       <div className="bg-white border-b border-gray-100 px-4 py-2 flex items-center gap-2">
-        {[1, 2, 3].map((s) => (
-          <React.Fragment key={s}>
-            <div className={`flex items-center gap-1.5 text-xs font-medium ${s === 3 ? 'text-green-600' : 'text-green-600'}`}>
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${s === 3 ? 'bg-green-600 text-white' : 'bg-green-500 text-white'}`}>
-                ✓
+        {[
+          { n: 1, label: '데이터 입력' },
+          { n: 2, label: '전기력선' },
+          { n: 3, label: '3D 결과' },
+          { n: 4, label: '토론' },
+        ].map(({ n, label }, idx, arr) => (
+          <React.Fragment key={n}>
+            <div className={`flex items-center gap-1.5 text-xs font-medium ${n === 3 ? 'text-green-600' : n < 3 ? 'text-green-600' : 'text-gray-400'}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${n <= 3 ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                {n <= 3 ? '✓' : n}
               </div>
-              {s === 1 ? '데이터 입력' : s === 2 ? '전기력선' : '3D 결과'}
+              <span className="hidden sm:inline">{label}</span>
             </div>
-            {s < 3 && <div className="flex-1 h-0.5 bg-green-200 max-w-12" />}
+            {idx < arr.length - 1 && <div className="flex-1 h-0.5 bg-gray-200 max-w-8" />}
           </React.Fragment>
         ))}
       </div>
@@ -115,13 +107,12 @@ export default function Step3Result() {
           <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-5 text-white shadow-lg">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center text-2xl">
-                🎉
+                📊
               </div>
               <div>
-                <h2 className="text-lg font-bold">실험 완료!</h2>
+                <h2 className="text-lg font-bold">데이터 분석 완료!</h2>
                 <p className="text-green-100 text-sm mt-0.5">
-                  {EXP_LABEL} 데이터 분석이 완료되었습니다.
-                  {session?.score !== null && ` 전기력선 수직도: ${session.score}점`}
+                  {EXP_LABEL} — 아래에서 3D 전위 분포를 확인하세요.
                 </p>
               </div>
             </div>
@@ -131,7 +122,7 @@ export default function Step3Result() {
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
             <h2 className="text-base font-bold text-gray-800 mb-1">3D 전위 지형도</h2>
             <p className="text-xs text-gray-500 mb-4">
-              마우스로 드래그하여 회전하고, 스크롤로 확대/축소할 수 있습니다.
+              마우스로 드래그하여 회전, 스크롤로 확대/축소할 수 있습니다.
             </p>
             <div className="overflow-x-auto">
               <Surface3D
@@ -152,7 +143,7 @@ export default function Step3Result() {
             )}
           </div>
 
-          {/* 2D 등전위선 비교 */}
+          {/* 2D 등전위선 */}
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
             <h2 className="text-base font-bold text-gray-800 mb-4">등전위선 지도</h2>
             <div className={`grid gap-4 ${hasComparison ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
@@ -163,7 +154,7 @@ export default function Step3Result() {
                   electrodeConfig={session?.electrodeConfig}
                   width={260}
                   height={260}
-                  levels={12}
+                  levels={20}
                 />
               </div>
               {hasComparison && (
@@ -174,7 +165,7 @@ export default function Step3Result() {
                     electrodeConfig={otherSession?.electrodeConfig}
                     width={260}
                     height={260}
-                    levels={12}
+                    levels={20}
                   />
                 </div>
               )}
@@ -182,7 +173,7 @@ export default function Step3Result() {
           </div>
 
           {/* 요약 카드 */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200 text-center">
               <p className="text-xs text-gray-500 mb-1">측정 포인트</p>
               <p className="text-2xl font-black text-blue-600">{measurements.length}</p>
@@ -193,19 +184,19 @@ export default function Step3Result() {
               <p className="text-2xl font-black text-purple-600">{session?.drawnLines?.length || 0}</p>
               <p className="text-xs text-gray-400">개</p>
             </div>
-            <div className={`bg-white rounded-xl p-4 shadow-sm border border-gray-200 text-center col-span-2 sm:col-span-1`}>
-              <p className="text-xs text-gray-500 mb-1">수직도 점수</p>
-              <p className={`text-2xl font-black ${scoreColor}`}>
-                {session?.score !== null && session?.score !== undefined ? session.score : '—'}
-              </p>
-              <p className="text-xs text-gray-400">/ 100점</p>
-            </div>
           </div>
 
-          {/* 홈으로 버튼 */}
+          {/* 다음: 토론 */}
+          <button
+            onClick={() => navigate(`/student/session/${sessionId}/step4`)}
+            className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg transition-all shadow-lg hover:shadow-xl"
+          >
+            Step 4 — 토론 문제 답하기 →
+          </button>
+
           <button
             onClick={() => navigate('/student')}
-            className="w-full py-4 rounded-2xl border-2 border-blue-200 text-blue-600 font-bold text-base hover:bg-blue-50 transition-colors"
+            className="w-full py-3 rounded-2xl border-2 border-gray-200 text-gray-500 font-medium text-sm hover:bg-gray-50 transition-colors"
           >
             실험 선택 화면으로 돌아가기
           </button>
