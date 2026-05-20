@@ -87,8 +87,8 @@ export default function ExperimentSelect() {
 
   async function handleSelectExperiment(exp) {
     if (creating) return
-    // 미완료(step < 3) 세션이 이미 있으면 기존 세션으로 이동
-    const existing = sessions.find(s => s.experimentType === exp.id && s.step < 3)
+    // 미완료(step < 4) 세션이 이미 있으면 기존 세션으로 이동
+    const existing = sessions.find(s => s.experimentType === exp.id && s.step < 4)
     if (existing) {
       navigate(`/student/session/${existing.id}/step${existing.step}`)
       return
@@ -114,7 +114,12 @@ export default function ExperimentSelect() {
     navigate('/login')
   }
 
-  const STEP_LABELS = { 1: 'Step 1: 데이터 입력', 2: 'Step 2: 전기력선 그리기', 3: 'Step 3: 3D 결과' }
+  const STEP_LABELS = {
+    1: 'Step 1: 데이터 입력',
+    2: 'Step 2: 전기력선 그리기',
+    3: 'Step 3: 3D 결과',
+    4: '완료 (토론 답변 수정 가능)',
+  }
   const EXP_LABELS = { point_electrode: '점전극', line_electrode: '선전극' }
 
   return (
@@ -202,11 +207,15 @@ export default function ExperimentSelect() {
               )}
 
               {creating !== exp.id && (() => {
-                const hasIncomplete = sessions.some(s => s.experimentType === exp.id && s.step < 3)
+                const incomplete = sessions.find(s => s.experimentType === exp.id && s.step < 4)
+                const isDone = sessions.some(s => s.experimentType === exp.id && s.step >= 4)
                 return (
                   <div className="mt-2 flex items-center gap-1 text-blue-600">
+                    {isDone && !incomplete && (
+                      <span className="text-xs text-green-600 font-semibold bg-green-100 px-2 py-0.5 rounded-full mr-1">완료됨</span>
+                    )}
                     <span className="text-sm font-semibold">
-                      {hasIncomplete ? '이어서 하기' : '새 실험 시작'}
+                      {incomplete ? '이어서 하기' : '새 실험 시작'}
                     </span>
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -233,12 +242,11 @@ export default function ExperimentSelect() {
                     <span className="text-sm font-semibold text-gray-800">
                       {EXP_LABELS[session.experimentType] || session.experimentType}
                     </span>
-                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
+                    <span className={`ml-2 text-xs rounded-full px-2 py-0.5 ${session.step >= 4 ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
                       {STEP_LABELS[session.step] || `Step ${session.step}`}
                     </span>
                     <p className="text-xs text-gray-400 mt-1">
                       측정 {session.measurements?.length || 0} / 64개
-                      {session.score !== null && ` · 점수 ${session.score}점`}
                     </p>
                   </div>
                   <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">

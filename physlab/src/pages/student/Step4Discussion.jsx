@@ -1,43 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getSession, saveAnswers } from '../../services/firebase.js'
-
-export const DISCUSSION_QUESTIONS = [
-  {
-    id: 'q1',
-    text: '측정한 등전위선의 모양은 어떠했나요? 전극의 종류(점전극/선전극)에 따라 모양이 어떻게 달라지는지 설명하세요.',
-  },
-  {
-    id: 'q2',
-    text: '전기력선과 등전위선은 어떤 관계가 있나요? 직접 그린 전기력선과 등전위선을 비교하여 설명하세요.',
-  },
-  {
-    id: 'q3',
-    text: '전극 가까운 곳과 먼 곳에서 등전위선의 간격이 다른 이유는 무엇인가요? 전기장의 세기와 연결하여 생각해 보세요.',
-  },
-  {
-    id: 'q4',
-    text: '실험 측정값에 오차가 발생했다면, 그 원인은 무엇이라고 생각하나요? 오차를 줄일 수 있는 방법도 제안해 보세요.',
-  },
-  {
-    id: 'q5',
-    text: '이번 실험에서 새롭게 알게 된 점, 또는 더 탐구해 보고 싶은 점을 자유롭게 작성하세요.',
-  },
-]
+import { getSession, saveAnswers, getDiscussionQuestions } from '../../services/firebase.js'
 
 export default function Step4Discussion() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
   const [session, setSession] = useState(null)
+  const [questions, setQuestions] = useState([])
   const [answers, setAnswers] = useState({})
-  const [saveStatus, setSaveStatus] = useState('idle') // 'idle' | 'saving' | 'saved'
+  const [saveStatus, setSaveStatus] = useState('idle')
   const [loading, setLoading] = useState(true)
   const debounceRef = useRef(null)
 
   useEffect(() => {
-    getSession(sessionId).then(s => {
+    Promise.all([
+      getSession(sessionId),
+      getDiscussionQuestions()
+    ]).then(([s, qs]) => {
       if (!s) { navigate('/student'); return }
       setSession(s)
+      setQuestions(qs)
       if (s.answers) setAnswers(s.answers)
       setLoading(false)
     })
@@ -61,11 +43,8 @@ export default function Step4Discussion() {
   }
 
   async function handleFinish() {
-    // 현재 답변 저장 후 종료
     if (Object.keys(answers).length > 0) {
-      try {
-        await saveAnswers(sessionId, answers)
-      } catch {}
+      try { await saveAnswers(sessionId, answers) } catch {}
     }
     navigate('/student')
   }
@@ -79,7 +58,7 @@ export default function Step4Discussion() {
   }
 
   const EXP_LABEL = session?.experimentType === 'line_electrode' ? '실험 2 — 선전극' : '실험 1 — 점전극'
-  const answeredCount = DISCUSSION_QUESTIONS.filter(q => answers[q.id]?.trim()).length
+  const answeredCount = questions.filter(q => answers[q.id]?.trim()).length
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -100,7 +79,6 @@ export default function Step4Discussion() {
             <span className="text-xs text-gray-500">토론 문제</span>
           </div>
         </div>
-        {/* 저장 상태 */}
         <div className="text-xs">
           {saveStatus === 'saving' && (
             <span className="flex items-center gap-1 text-amber-600">
@@ -145,11 +123,10 @@ export default function Step4Discussion() {
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
             <div className="flex items-start gap-3">
               <div className="text-2xl">💬</div>
-              <div>
+              <div className="flex-1">
                 <h2 className="text-sm font-bold text-indigo-800 mb-1">토론 문제</h2>
                 <p className="text-xs text-indigo-600">
-                  아래 질문에 대해 생각해 보고 답을 작성하세요.
-                  답변은 자동으로 저장되며, 선생님과 함께 토론합니다.
+                  질문에 답을 작성하세요. 자동 저장되며 언제든지 수정할 수 있습니다.
                 </p>
               </div>
             </div>
@@ -157,17 +134,24 @@ export default function Step4Discussion() {
               <div className="flex-1 h-2 bg-indigo-200 rounded-full">
                 <div
                   className="h-2 bg-indigo-500 rounded-full transition-all"
-                  style={{ width: `${(answeredCount / DISCUSSION_QUESTIONS.length) * 100}%` }}
+                  style={{ width: questions.length > 0 ? `${(answeredCount / questions.length) * 100}%` : '0%' }}
                 />
               </div>
               <span className="text-xs text-indigo-600 font-medium">
-                {answeredCount} / {DISCUSSION_QUESTIONS.length}
+                {answeredCount} / {questions.length}
               </span>
             </div>
           </div>
 
-          {/* 질문 카드들 */}
-          {DISCUSSION_QUESTIONS.map((q, idx) => {
+          {/* 질문이 없을 때 */}
+          {questions.length === 0 && (
+            <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-200 text-center">
+              <p className="text-gray-400 text-sm">선생님이 아직 토론 질문을 등록하지 않았습니다.</p>
+            </div>
+          )}
+
+          {/* 질문 카드 */}
+          {questions.map((q, idx) => {
             const answered = answers[q.id]?.trim()
             return (
               <div
@@ -183,7 +167,7 @@ export default function Step4Discussion() {
                 <textarea
                   value={answers[q.id] || ''}
                   onChange={e => handleChange(q.id, e.target.value)}
-                  placeholder="답을 입력하세요..."
+                  placeholder="답을 입력하세요... (언제든지 수정 가능)"
                   rows={3}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent resize-none transition-colors"
                 />
@@ -196,7 +180,7 @@ export default function Step4Discussion() {
             onClick={handleFinish}
             className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg transition-all shadow-lg hover:shadow-xl"
           >
-            실험 완료 — 처음으로 돌아가기
+            {session?.step >= 4 ? '답변 저장 후 나가기' : '실험 완료 — 처음으로 돌아가기'}
           </button>
         </div>
       </main>

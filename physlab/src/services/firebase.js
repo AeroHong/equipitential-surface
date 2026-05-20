@@ -89,7 +89,7 @@ export async function saveDrawingResult(sessionId, drawnLines) {
 }
 
 /**
- * 토론 답변 저장
+ * 토론 답변 저장 (step 4로 업데이트 = 실험 완료)
  * @param {string} sessionId
  * @param {object} answers - { q1: "...", q2: "...", ... }
  */
@@ -97,6 +97,37 @@ export async function saveAnswers(sessionId, answers) {
   await updateDoc(doc(db, 'sessions', sessionId), {
     answers,
     step: 4,
+    updatedAt: serverTimestamp()
+  })
+}
+
+// ─── 토론 질문 관리 (settings 컬렉션) ─────────────────────────
+
+const DEFAULT_QUESTIONS = [
+  { id: 'q1', text: '측정한 등전위선의 모양은 어떠했나요? 전극의 종류(점전극/선전극)에 따라 어떻게 달라지는지 설명하세요.', order: 1 },
+  { id: 'q2', text: '전기력선과 등전위선은 어떤 관계가 있나요? 직접 그린 전기력선과 등전위선을 비교하여 설명하세요.', order: 2 },
+  { id: 'q3', text: '전극 가까운 곳과 먼 곳에서 등전위선 간격이 다른 이유는 무엇인가요? 전기장의 세기와 연결하여 설명하세요.', order: 3 },
+  { id: 'q4', text: '실험 측정값에 오차가 발생했다면 원인은 무엇이라고 생각하나요? 오차를 줄이는 방법도 제안해 보세요.', order: 4 },
+  { id: 'q5', text: '이번 실험에서 새롭게 알게 된 점, 또는 더 탐구해 보고 싶은 점을 자유롭게 작성하세요.', order: 5 },
+]
+
+/**
+ * 토론 질문 목록 조회
+ * @returns {Promise<Array<{id, text, order}>>}
+ */
+export async function getDiscussionQuestions() {
+  const snap = await getDoc(doc(db, 'settings', 'discussion_questions'))
+  if (!snap.exists() || !snap.data().questions?.length) return DEFAULT_QUESTIONS
+  return snap.data().questions
+}
+
+/**
+ * 토론 질문 저장 (admin용)
+ * @param {Array<{id, text, order}>} questions
+ */
+export async function saveDiscussionQuestions(questions) {
+  await setDoc(doc(db, 'settings', 'discussion_questions'), {
+    questions,
     updatedAt: serverTimestamp()
   })
 }

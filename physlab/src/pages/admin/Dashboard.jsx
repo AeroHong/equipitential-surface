@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
 import { auth } from '../../firebase.js'
 import { useAuth } from '../../App.jsx'
-import { subscribeAllStudents, subscribeAllSessions, subscribeStudentSessions, deleteStudent } from '../../services/firebase.js'
-import { DISCUSSION_QUESTIONS } from '../student/Step4Discussion.jsx'
+import {
+  subscribeAllStudents, subscribeAllSessions, subscribeStudentSessions,
+  deleteStudent, getDiscussionQuestions, saveDiscussionQuestions
+} from '../../services/firebase.js'
 import EquipotentialMap from '../../components/EquipotentialMap.jsx'
 import Grid8x8 from '../../components/Grid8x8.jsx'
 
@@ -76,11 +78,13 @@ function StudentCard({ student, sessions, onClick, onDelete }) {
   const measurements = latest?.measurements || []
   const filled   = measurements.length
 
-  const stepColor = step === 3 ? 'bg-green-100 text-green-700 border-green-200'
+  const stepColor = step >= 4 ? 'bg-green-100 text-green-700 border-green-200'
+                  : step === 3 ? 'bg-teal-100 text-teal-700 border-teal-200'
                   : step === 2 ? 'bg-purple-100 text-purple-700 border-purple-200'
                   : step === 1 ? 'bg-blue-100 text-blue-700 border-blue-200'
                   : 'bg-gray-100 text-gray-400 border-gray-200'
-  const stepLabel = step === 3 ? '완료'
+  const stepLabel = step >= 4 ? '✅ 완료'
+                  : step === 3 ? 'Step 3'
                   : step === 2 ? 'Step 2'
                   : step === 1 ? 'Step 1'
                   : '미시작'
@@ -180,7 +184,7 @@ function StudentCard({ student, sessions, onClick, onDelete }) {
 }
 
 // ── 상세 슬라이드 패널 ───────────────────────────────────────────
-function DetailPanel({ student, onClose, onFullPage }) {
+function DetailPanel({ student, onClose, onFullPage, questions = [] }) {
   const [sessions, setSessions] = useState([])
   const [loading,  setLoading]  = useState(true)
 
@@ -304,12 +308,12 @@ function DetailPanel({ student, onClose, onFullPage }) {
                 {session.answers && Object.keys(session.answers).length > 0 && (
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <p className="text-xs font-semibold text-indigo-700 mb-2">💬 토론 답변</p>
-                    {DISCUSSION_QUESTIONS.map((q, idx) => {
+                    {questions.map((q, idx) => {
                       const ans = session.answers[q.id]
                       if (!ans?.trim()) return null
                       return (
                         <div key={q.id} className="mb-2">
-                          <p className="text-xs text-gray-500 font-medium">Q{idx + 1}. {q.text.slice(0, 40)}...</p>
+                          <p className="text-xs text-gray-500 font-medium">Q{idx + 1}. {q.text.slice(0, 50)}...</p>
                           <p className="text-xs text-gray-700 mt-0.5 bg-indigo-50 rounded-lg p-2">{ans}</p>
                         </div>
                       )
@@ -325,20 +329,142 @@ function DetailPanel({ student, onClose, onFullPage }) {
   )
 }
 
+// ── 질문 관리 모달 ────────────────────────────────────────────────
+function QuestionManagerModal({ onClose }) {
+  const [questions, setQuestions] = useState([])
+  const [newText, setNewText] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    getDiscussionQuestions().then(qs => { setQuestions(qs); setLoaded(true) })
+  }, [])
+
+  function addQuestion() {
+    const text = newText.trim()
+    if (!text) return
+    const id = `q${Date.now()}`
+    setQuestions(prev => [...prev, { id, text, order: prev.length + 1 }])
+    setNewText('')
+  }
+
+  function removeQuestion(id) {
+    setQuestions(prev => prev.filter(q => q.id !== id))
+  }
+
+  function updateQuestion(id, text) {
+    setQuestions(prev => prev.map(q => q.id === id ? { ...q, text } : q))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await saveDiscussionQuestions(questions)
+      onClose()
+    } catch (err) {
+      alert('저장 실패: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black bg-opacity-40 z-40" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+          <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-base font-bold text-gray-900">토론 질문 관리</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5 space-y-3">
+            {!loaded && (
+              <div className="flex justify-center py-8">
+                <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            {loaded && questions.map((q, idx) => (
+              <div key={q.id} className="flex items-start gap-2">
+                <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-2">
+                  {idx + 1}
+                </div>
+                <textarea
+                  value={q.text}
+                  onChange={e => updateQuestion(q.id, e.target.value)}
+                  rows={2}
+                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+                />
+                <button
+                  onClick={() => removeQuestion(q.id)}
+                  className="text-gray-300 hover:text-red-500 mt-2 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+
+            {/* 새 질문 추가 */}
+            <div className="flex items-start gap-2 pt-2 border-t border-gray-100">
+              <textarea
+                value={newText}
+                onChange={e => setNewText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) addQuestion() }}
+                placeholder="새 질문 입력... (Ctrl+Enter로 추가)"
+                rows={2}
+                className="flex-1 border border-dashed border-indigo-300 rounded-xl px-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+              />
+              <button
+                onClick={addQuestion}
+                disabled={!newText.trim()}
+                className="mt-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl disabled:opacity-40 transition-colors"
+              >
+                추가
+              </button>
+            </div>
+          </div>
+
+          <div className="px-5 py-4 border-t border-gray-200 flex gap-2">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50">
+              취소
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
+            >
+              {saving ? '저장 중...' : '저장 (학생에게 즉시 반영)'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ── 메인 대시보드 ────────────────────────────────────────────────
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user, userInfo } = useAuth()
   const [students,     setStudents]     = useState([])
   const [sessions,     setSessions]     = useState([])
+  const [questions,    setQuestions]    = useState([])
   const [searchQuery,  setSearchQuery]  = useState('')
   const [filterStep,   setFilterStep]   = useState('all')
   const [loading,      setLoading]      = useState(true)
   const [selectedStudent, setSelectedStudent] = useState(null)
+  const [showQManager, setShowQManager] = useState(false)
 
   useEffect(() => {
     const unsubStudents = subscribeAllStudents(data => { setStudents(data); setLoading(false) })
     const unsubSessions = subscribeAllSessions(data => setSessions(data))
+    getDiscussionQuestions().then(setQuestions)
     return () => { unsubStudents(); unsubSessions() }
   }, [])
 
@@ -366,7 +492,7 @@ export default function Dashboard() {
   })
 
   const totalStudents    = students.length
-  const completedStudents = students.filter(st => (sessionsByStudent[st.uid] || []).some(s => s.step === 3)).length
+  const completedStudents = students.filter(st => (sessionsByStudent[st.uid] || []).some(s => s.step >= 4)).length
   const activeStudents   = students.filter(st => {
     const latest = (sessionsByStudent[st.uid] || [])[0]
     return latest && timeDiffSec(latest.updatedAt) < 120
@@ -390,6 +516,12 @@ export default function Dashboard() {
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
             실시간
           </div>
+          <button
+            onClick={() => setShowQManager(true)}
+            className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-3 py-1.5 hover:bg-indigo-50 font-medium transition-colors"
+          >
+            💬 질문 관리
+          </button>
           <span className="text-sm text-gray-600 hidden sm:block">{userInfo?.name || user?.displayName}</span>
           <button onClick={async () => { await signOut(auth); navigate('/login') }}
             className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
@@ -429,7 +561,8 @@ export default function Dashboard() {
               { value: 'none',   label: '미시작' },
               { value: '1',      label: 'Step 1' },
               { value: '2',      label: 'Step 2' },
-              { value: '3',      label: '완료' },
+              { value: '3',      label: 'Step 3' },
+              { value: '4',      label: '✅ 완료' },
             ].map(opt => (
               <button key={opt.value} onClick={() => setFilterStep(opt.value)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -479,8 +612,20 @@ export default function Dashboard() {
       {selectedStudent && (
         <DetailPanel
           student={selectedStudent}
+          questions={questions}
           onClose={() => setSelectedStudent(null)}
           onFullPage={() => { navigate(`/admin/student/${selectedStudent.uid}`); setSelectedStudent(null) }}
+        />
+      )}
+
+      {/* 질문 관리 모달 */}
+      {showQManager && (
+        <QuestionManagerModal
+          onClose={() => {
+            setShowQManager(false)
+            // 저장 후 질문 목록 새로고침
+            getDiscussionQuestions().then(setQuestions)
+          }}
         />
       )}
     </div>
