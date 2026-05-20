@@ -48,7 +48,8 @@ export default function Step2Drawing() {
         await saveDrawingLines(sessionId, drawnLines)
         setAutoSaveStatus('saved')
         setTimeout(() => setAutoSaveStatus('idle'), 3000)
-      } catch {
+      } catch (err) {
+        console.error('자동저장 실패:', err)
         setAutoSaveStatus('idle')
       }
     }, 2000)
@@ -75,12 +76,27 @@ export default function Step2Drawing() {
       alert('전기력선을 최소 1개 이상 그려주세요.')
       return
     }
+
+    // 자동저장 타이머 취소 (동시 쓰기 방지)
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+
+    // 좌표 유효성 검사 (Firestore는 NaN/Infinity 허용 안 함)
+    const cleanLines = drawnLines
+      .map(line => line.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)))
+      .filter(line => line.length > 1)
+
+    if (cleanLines.length === 0) {
+      alert('유효한 전기력선이 없습니다. 다시 그려주세요.')
+      return
+    }
+
     setSubmitting(true)
     try {
-      await saveDrawingResult(sessionId, drawnLines)
+      await saveDrawingResult(sessionId, cleanLines)
       navigate(`/student/session/${sessionId}/step3`)
-    } catch {
-      alert('제출 중 오류가 발생했습니다.')
+    } catch (err) {
+      console.error('제출 오류:', err)
+      alert(`제출 오류: ${err?.message || err?.code || String(err)}`)
       setSubmitting(false)
     }
   }
