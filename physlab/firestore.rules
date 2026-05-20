@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 사용자 문서: 본인만 읽기/쓰기, super_admin은 전체 읽기
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if request.auth != null && (request.auth.uid == uid || isAdmin());
+    }
+
+    // 세션 문서: 본인 세션만 읽기/쓰기, super_admin은 전체 읽기
+    match /sessions/{sessionId} {
+      allow read: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
+      allow create: if request.auth != null && request.resource.data.studentUid == request.auth.uid;
+      allow update: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
+      allow delete: if request.auth != null && isAdmin();
+    }
+
+    // super_admin 판별 함수
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+  }
+}

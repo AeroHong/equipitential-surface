@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 터치 디바이스 기본 최적화 */
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 캔버스가 있는 영역 터치 스크롤 방지 */
+.no-scroll-touch {
+  touch-action: none;
+}
+
+/* 숫자 키패드 버튼 스타일 */
+.keypad-btn {
+  @apply flex items-center justify-center w-16 h-16 text-xl font-semibold rounded-xl bg-gray-100 active:bg-gray-300 select-none cursor-pointer transition-colors;
+}
+
+.keypad-btn:active {
+  transform: scale(0.95);
+}
