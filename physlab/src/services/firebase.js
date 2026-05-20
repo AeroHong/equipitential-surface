@@ -76,13 +76,26 @@ export async function updateStep(sessionId, step) {
 }
 
 /**
+ * Firestore는 nested array(배열 안 배열)를 미지원 → {points:[]} 객체로 직렬화
+ */
+function serializeLines(lines) {
+  return lines.map(line => ({ points: line }))
+}
+
+/**
+ * Firestore에서 로드한 drawnLines 역직렬화 (구형 포맷 호환)
+ */
+export function deserializeLines(lines) {
+  if (!lines || !Array.isArray(lines)) return []
+  return lines.map(l => Array.isArray(l) ? l : (l?.points || []))
+}
+
+/**
  * 드로잉 저장 (제출)
- * @param {string} sessionId
- * @param {Array} drawnLines
  */
 export async function saveDrawingResult(sessionId, drawnLines) {
   await updateDoc(doc(db, 'sessions', sessionId), {
-    drawnLines,
+    drawnLines: serializeLines(drawnLines),
     step: 3,
     updatedAt: serverTimestamp()
   })
@@ -133,13 +146,11 @@ export async function saveDiscussionQuestions(questions) {
 }
 
 /**
- * 드로잉 자동저장 (점수 없이 drawnLines만)
- * @param {string} sessionId
- * @param {Array} drawnLines
+ * 드로잉 자동저장
  */
 export async function saveDrawingLines(sessionId, drawnLines) {
   await updateDoc(doc(db, 'sessions', sessionId), {
-    drawnLines,
+    drawnLines: serializeLines(drawnLines),
     updatedAt: serverTimestamp()
   })
 }

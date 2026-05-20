@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import FieldLineCanvas from '../../components/FieldLineCanvas.jsx'
-import { getSession, saveDrawingResult, saveDrawingLines } from '../../services/firebase.js'
+import { getSession, saveDrawingResult, saveDrawingLines, deserializeLines } from '../../services/firebase.js'
 
 const CANVAS_SIZE = 350
 
@@ -23,8 +23,9 @@ export default function Step2Drawing() {
       if (!s) { navigate('/student'); return }
       setSession(s)
       if (s.drawnLines && s.drawnLines.length > 0) {
-        setDrawnLines(s.drawnLines)
-        drawnLinesRef.current = s.drawnLines
+        const loaded = deserializeLines(s.drawnLines)
+        setDrawnLines(loaded)
+        drawnLinesRef.current = loaded
       }
       // 이미 제출된 세션이면 step3로
       if (s.step >= 3) {
