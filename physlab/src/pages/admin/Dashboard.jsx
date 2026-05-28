@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { createRoot } from 'react-dom/client'
 import { useNavigate } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
 import { auth } from '../../firebase.js'
 import { useAuth } from '../../App.jsx'
 import {
   subscribeAllStudents, subscribeAllSessions, subscribeStudentSessions,
-  deleteStudent, getDiscussionQuestions, saveDiscussionQuestions
+  deleteStudent, getDiscussionQuestions, saveDiscussionQuestions,
+  deserializeLines, getStudentSessions, getDiscussionRecord
 } from '../../services/firebase.js'
 import EquipotentialMap from '../../components/EquipotentialMap.jsx'
 import Grid8x8 from '../../components/Grid8x8.jsx'
+import ReportTemplate from '../../components/ReportTemplate.jsx'
+import { downloadAllReportsAsZip } from '../../utils/reportGenerator.js'
 
 const EXP_LABELS = { point_electrode: '점전극', line_electrode: '선전극' }
 
@@ -452,14 +456,16 @@ function QuestionManagerModal({ onClose }) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user, userInfo } = useAuth()
-  const [students,     setStudents]     = useState([])
-  const [sessions,     setSessions]     = useState([])
-  const [questions,    setQuestions]    = useState([])
-  const [searchQuery,  setSearchQuery]  = useState('')
-  const [filterStep,   setFilterStep]   = useState('all')
-  const [loading,      setLoading]      = useState(true)
+  const [students,        setStudents]        = useState([])
+  const [sessions,        setSessions]        = useState([])
+  const [questions,       setQuestions]       = useState([])
+  const [searchQuery,     setSearchQuery]     = useState('')
+  const [filterStep,      setFilterStep]      = useState('all')
+  const [loading,         setLoading]         = useState(true)
   const [selectedStudent, setSelectedStudent] = useState(null)
-  const [showQManager, setShowQManager] = useState(false)
+  const [showQManager,    setShowQManager]    = useState(false)
+  const [bulkProgress,    setBulkProgress]    = useState(null) // null | {done, total}
+  const bulkContainerRef = useRef(null)
 
   useEffect(() => {
     const unsubStudents = subscribeAllStudents(data => { setStudents(data); setLoading(false) })
@@ -467,6 +473,80 @@ export default function Dashboard() {
     getDiscussionQuestions().then(setQuestions)
     return () => { unsubStudents(); unsubSessions() }
   }, [])
+
+  // ── 일괄 보고서 다운로드 ──────────────────────────────────────
+  async function handleBulkDownload() {
+    const sbsMap = {}
+    for (const s of sessions) {
+      if (!sbsMap[s.studentUid]) sbsMap[s.studentUid] = []
+      sbsMap[s.studentUid].push(s)
+    }
+    // 실험 1 또는 2 중 하나라도 완료(step>=3)한 학생
+    const completedStudents = students.filter(st =>
+      (sbsMap[st.uid] || []).some(s => s.step >= 3)
+    )
+    if (completedStudents.length === 0) {
+      alert('완료된 실험이 있는 학생이 없습니다.')
+      return
+    }
+    if (!window.confirm(`${completedStudents.length}명의 보고서를 ZIP으로 다운로드합니다.`)) return
+
+    setBulkProgress({ done: 0, total: completedStudents.length })
+
+    const container = bulkContainerRef.current
+    const items = []
+
+    for (let i = 0; i < completedStudents.length; i++) {
+      const st = completedStudents[i]
+      const stSessions = sbsMap[st.uid] || []
+
+      // 각 실험 타입별 최신 완료 세션
+      const pointSess = stSessions.find(s => s.experimentType === 'point_electrode' && s.step >= 3) || null
+      const lineSess  = stSessions.find(s => s.experimentType === 'line_electrode'  && s.step >= 3) || null
+
+      // 토론 답변 로드
+      const discRecord = await getDiscussionRecord(st.uid).catch(() => ({ answers: {} }))
+
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;'
+      container.appendChild(wrapper)
+
+      const session1ForReport = pointSess ? {
+        ...pointSess, drawnLines_deserialized: deserializeLines(pointSess.drawnLines || [])
+      } : null
+      const session2ForReport = lineSess ? {
+        ...lineSess, drawnLines_deserialized: deserializeLines(lineSess.drawnLines || [])
+      } : null
+
+      const root = createRoot(wrapper)
+      root.render(
+        React.createElement(ReportTemplate, {
+          student: st,
+          session1: session1ForReport,
+          session2: session2ForReport,
+          questions,
+          answers: discRecord?.answers || {}
+        })
+      )
+
+      await new Promise(r => setTimeout(r, 800))
+
+      items.push({
+        filename: `${st.name || st.uid}_등전위면_보고서.pdf`,
+        element: wrapper
+      })
+
+      setBulkProgress({ done: i + 1, total: completedStudents.length })
+    }
+
+    try {
+      await downloadAllReportsAsZip(items, `PhysLab_전체보고서_${new Date().toLocaleDateString('ko-KR').replace(/\./g, '').replace(/ /g, '')}.zip`)
+    } finally {
+      // 정리
+      while (container.firstChild) container.removeChild(container.firstChild)
+      setBulkProgress(null)
+    }
+  }
 
   const sessionsByStudent = {}
   for (const s of sessions) {
@@ -492,7 +572,7 @@ export default function Dashboard() {
   })
 
   const totalStudents    = students.length
-  const completedStudents = students.filter(st => (sessionsByStudent[st.uid] || []).some(s => s.step >= 4)).length
+  const completedStudents = students.filter(st => (sessionsByStudent[st.uid] || []).some(s => s.step >= 3)).length
   const activeStudents   = students.filter(st => {
     const latest = (sessionsByStudent[st.uid] || [])[0]
     return latest && timeDiffSec(latest.updatedAt) < 120
@@ -516,6 +596,15 @@ export default function Dashboard() {
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
             실시간
           </div>
+          <button
+            onClick={handleBulkDownload}
+            disabled={bulkProgress !== null}
+            className="text-xs text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-lg px-3 py-1.5 hover:bg-emerald-50 font-medium transition-colors disabled:opacity-60"
+          >
+            {bulkProgress
+              ? `📄 생성 중... ${bulkProgress.done}/${bulkProgress.total}`
+              : '📥 보고서 일괄 다운로드'}
+          </button>
           <button
             onClick={() => setShowQManager(true)}
             className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-3 py-1.5 hover:bg-indigo-50 font-medium transition-colors"
@@ -623,11 +712,13 @@ export default function Dashboard() {
         <QuestionManagerModal
           onClose={() => {
             setShowQManager(false)
-            // 저장 후 질문 목록 새로고침
             getDiscussionQuestions().then(setQuestions)
           }}
         />
       )}
+
+      {/* 일괄 다운로드 전용 숨겨진 렌더링 컨테이너 */}
+      <div ref={bulkContainerRef} style={{ position: 'fixed', left: '-9999px', top: 0, zIndex: -1 }} />
     </div>
   )
 }

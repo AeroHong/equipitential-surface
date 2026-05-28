@@ -39,7 +39,6 @@ export default function Step2Drawing() {
   // 자동저장 (2초 debounce)
   useEffect(() => {
     if (loading) return
-    if (drawnLines.length === 0) return
 
     if (debounceTimer.current) clearTimeout(debounceTimer.current)
     setAutoSaveStatus('saving')
@@ -64,9 +63,7 @@ export default function Step2Drawing() {
 
   useEffect(() => {
     function handleBeforeUnload() {
-      if (drawnLinesRef.current.length > 0) {
-        saveDrawingLines(sessionId, drawnLinesRef.current).catch(() => {})
-      }
+      saveDrawingLines(sessionId, drawnLinesRef.current).catch(() => {})
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)

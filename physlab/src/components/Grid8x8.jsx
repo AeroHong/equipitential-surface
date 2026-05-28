@@ -137,11 +137,21 @@ export default function Grid8x8({ measurements = [], onCellClick, selectedCell =
 
             return (
               <g key={key}>
-                {/* 터치 히트 영역 */}
-                <circle cx={cx} cy={cy} r={DOT_R + 8}
+                {/* 터치 히트 영역 — onTouchEnd + preventDefault로 300ms 지연 및 backdrop 이벤트 차단 */}
+                <circle cx={cx} cy={cy} r={DOT_R + 11}
                   fill="transparent"
                   style={{ cursor: isCom ? 'not-allowed' : 'pointer' }}
-                  onPointerDown={(e) => { e.preventDefault(); if (isCom) return; onCellClick && onCellClick(col, row) }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (isCom || !onCellClick) return
+                    onCellClick(col, row)
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (isCom || !onCellClick) return
+                    onCellClick(col, row)
+                  }}
                 />
 
                 {/* 교점 원 */}

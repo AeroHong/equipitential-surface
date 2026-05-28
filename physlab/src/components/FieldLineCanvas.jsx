@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useCallback } from 'react'
 import * as d3 from 'd3'
-import { idwInterpolate } from '../services/interpolate.js'
+import { laplaceInterpolate } from '../services/interpolate.js'
 import { computeContours, getVoltageRange } from '../utils/equipotential.js'
+import { detectLineFormat } from '../utils/fieldLine.js'
 
-const RESOLUTION = 50
+const RESOLUTION = 71  // 0.1 unit/cell 해상도
 
 /**
  * 전기력선 드로잉 캔버스
@@ -49,7 +50,7 @@ export default function FieldLineCanvas({
       return
     }
 
-    const grid = idwInterpolate(measurements, RESOLUTION)
+    const grid = laplaceInterpolate(measurements, RESOLUTION)
     const contourData = computeContours(grid, RESOLUTION, 20)   // 20개 촘촘히
     const { min: minV, max: maxV } = getVoltageRange(grid)
 
@@ -130,19 +131,49 @@ export default function FieldLineCanvas({
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, width, height)
 
-    ctx.strokeStyle = '#2563eb'
-    ctx.lineWidth = 2.5
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
+    const fmt   = detectLineFormat(allLines.current)
+    const scale = fmt === 'grid' ? width / 7 : 1
+    const arrowSize = Math.max(8, width / 28)
+
+    // 화살표 그리기 헬퍼 (채워진 삼각형)
+    function drawArrow(pts, frac) {
+      const idx = Math.floor(pts.length * frac)
+      if (idx < 1 || idx >= pts.length) return
+      const p1 = pts[idx - 1], p2 = pts[idx]
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+      const tip = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+      const A = Math.PI / 6  // 화살표 반각 30°
+      ctx.beginPath()
+      ctx.moveTo(tip.x, tip.y)
+      ctx.lineTo(tip.x - arrowSize * Math.cos(angle - A), tip.y - arrowSize * Math.sin(angle - A))
+      ctx.lineTo(tip.x - arrowSize * Math.cos(angle + A), tip.y - arrowSize * Math.sin(angle + A))
+      ctx.closePath()
+      ctx.fillStyle = '#1d4ed8'
+      ctx.fill()
+    }
+
+    ctx.strokeStyle = '#1d4ed8'
+    ctx.lineWidth   = 2
+    ctx.lineCap     = 'round'
+    ctx.lineJoin    = 'round'
 
     for (const line of allLines.current) {
       if (line.length < 2) continue
+
+      const pts = line.map(p => ({ x: p.x * scale, y: p.y * scale }))
+
       ctx.beginPath()
-      ctx.moveTo(line[0].x, line[0].y)
-      for (let i = 1; i < line.length; i++) {
-        ctx.lineTo(line[i].x, line[i].y)
-      }
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
       ctx.stroke()
+
+      // 선 길이가 충분하면 33%, 67% 두 지점에 화살표
+      if (pts.length >= 6) {
+        drawArrow(pts, 0.33)
+        drawArrow(pts, 0.67)
+      } else if (pts.length >= 3) {
+        drawArrow(pts, 0.55)
+      }
     }
   }, [width, height])
 
@@ -193,6 +224,7 @@ export default function FieldLineCanvas({
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.beginPath()
+      // 현재 그리는 선은 항상 픽셀 좌표 (사용자 입력)
       ctx.moveTo(line[0].x, line[0].y)
       for (let i = 1; i < line.length; i++) {
         ctx.lineTo(line[i].x, line[i].y)

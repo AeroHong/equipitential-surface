@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
 import Plot from 'react-plotly.js'
-import { idwInterpolate } from '../services/interpolate.js'
+import { laplaceInterpolate } from '../services/interpolate.js'
 
 const RESOLUTION = 40
 
@@ -27,7 +27,7 @@ export default function Surface3D({
     if (!measurements1 || measurements1.length < 3) {
       return { z1: null, x1: [], y1: [] }
     }
-    const grid = idwInterpolate(measurements1, RESOLUTION)
+    const grid = laplaceInterpolate(measurements1, RESOLUTION)
     const xs = Array.from({ length: RESOLUTION }, (_, i) => parseFloat((i * 7 / (RESOLUTION - 1)).toFixed(2)))
     const ys = Array.from({ length: RESOLUTION }, (_, i) => parseFloat((i * 7 / (RESOLUTION - 1)).toFixed(2)))
     return { z1: grid, x1: xs, y1: ys }
@@ -37,7 +37,7 @@ export default function Surface3D({
     if (!measurements2 || measurements2.length < 3) {
       return { z2: null, x2: [], y2: [] }
     }
-    const grid = idwInterpolate(measurements2, RESOLUTION)
+    const grid = laplaceInterpolate(measurements2, RESOLUTION)
     const xs = Array.from({ length: RESOLUTION }, (_, i) => parseFloat((i * 7 / (RESOLUTION - 1)).toFixed(2)))
     const ys = Array.from({ length: RESOLUTION }, (_, i) => parseFloat((i * 7 / (RESOLUTION - 1)).toFixed(2)))
     return { z2: grid, x2: xs, y2: ys }

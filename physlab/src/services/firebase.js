@@ -102,9 +102,17 @@ export async function saveDrawingResult(sessionId, drawnLines) {
 }
 
 /**
- * 토론 답변 저장 (step 4로 업데이트 = 실험 완료)
- * @param {string} sessionId
- * @param {object} answers - { q1: "...", q2: "...", ... }
+ * 토론 답변 자동저장 (step 변경 없음 — 타이핑 중 debounce 저장용)
+ */
+export async function saveAnswersDraft(sessionId, answers) {
+  await updateDoc(doc(db, 'sessions', sessionId), {
+    answers,
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 토론 답변 최종 저장 (step 4로 업데이트 = 실험 완료)
  */
 export async function saveAnswers(sessionId, answers) {
   await updateDoc(doc(db, 'sessions', sessionId), {
@@ -153,6 +161,38 @@ export async function saveDrawingLines(sessionId, drawnLines) {
     drawnLines: serializeLines(drawnLines),
     updatedAt: serverTimestamp()
   })
+}
+
+// ─── 토론 기록 (사용자별 독립 저장) ──────────────────────────
+
+/**
+ * 학생의 토론 답변 기록 조회
+ */
+export async function getDiscussionRecord(uid) {
+  const snap = await getDoc(doc(db, 'discussions', uid))
+  if (!snap.exists()) return { answers: {}, completed: false }
+  return snap.data()
+}
+
+/**
+ * 토론 답변 자동저장 (draft)
+ */
+export async function saveDiscussionDraft(uid, answers) {
+  await setDoc(doc(db, 'discussions', uid), {
+    answers,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+}
+
+/**
+ * 토론 답변 최종 제출 (completed=true)
+ */
+export async function saveDiscussionFinal(uid, answers) {
+  await setDoc(doc(db, 'discussions', uid), {
+    answers,
+    completed: true,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
 }
 
 /**
@@ -232,6 +272,14 @@ export function subscribeAllSessions(callback) {
     const sessions = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     callback(sessions)
   })
+}
+
+/**
+ * 단일 실험 세션 삭제
+ * @param {string} sessionId
+ */
+export async function deleteSession(sessionId) {
+  await deleteDoc(doc(db, 'sessions', sessionId))
 }
 
 /**

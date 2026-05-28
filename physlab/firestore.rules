@@ -13,7 +13,12 @@ service cloud.firestore {
       allow read: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
       allow create: if request.auth != null && request.resource.data.studentUid == request.auth.uid;
       allow update: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
-      allow delete: if request.auth != null && isAdmin();
+      allow delete: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
+    }
+
+    // 토론 답변 문서 (uid별 1개)
+    match /discussions/{uid} {
+      allow read, write: if request.auth != null && (request.auth.uid == uid || isAdmin());
     }
 
     // 설정 문서 (토론 질문 등): 인증된 사용자 읽기, admin만 쓰기

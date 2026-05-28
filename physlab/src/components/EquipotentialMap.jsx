@@ -1,9 +1,9 @@
 import React, { useMemo, useRef, useEffect } from 'react'
 import * as d3 from 'd3'
-import { idwInterpolate } from '../services/interpolate.js'
+import { laplaceInterpolate } from '../services/interpolate.js'
 import { computeContours, getVoltageRange } from '../utils/equipotential.js'
 
-const RESOLUTION = 50
+const RESOLUTION = 71
 const GRID_SIZE = 8  // 0~7
 
 /**
@@ -26,7 +26,7 @@ export default function EquipotentialMap({
 
   const grid = useMemo(() => {
     if (measurements.length < 3) return null
-    return idwInterpolate(measurements, RESOLUTION)
+    return laplaceInterpolate(measurements, RESOLUTION)
   }, [measurements])
 
   const contourData = useMemo(() => {
