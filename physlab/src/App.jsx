@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { onAuthStateChanged } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from './firebase.js'
@@ -8,8 +8,14 @@ import LoginPage from './pages/LoginPage.jsx'
 import ExperimentSelect from './pages/student/ExperimentSelect.jsx'
 import ProfileSetup from './pages/student/ProfileSetup.jsx'
 import Step1Input from './pages/student/Step1Input.jsx'
-import Step2Drawing from './pages/student/Step2Drawing.jsx'
 import Step3Result from './pages/student/Step3Result.jsx'
+import Step4Discussion from './pages/student/Step4Discussion.jsx'
+
+// Step2는 제거됨 — 전기력선 자동 생성으로 대체. 기존 URL은 Step3으로 리다이렉트.
+function Step2Redirect() {
+  const { sessionId } = useParams()
+  return <Navigate to={`/student/session/${sessionId}/step3`} replace />
+}
 import Dashboard from './pages/admin/Dashboard.jsx'
 import StudentView from './pages/admin/StudentView.jsx'
 import SetupAdmin from './pages/SetupAdmin.jsx'
@@ -162,7 +168,7 @@ export default function App() {
             path="/student/session/:sessionId/step2"
             element={
               <RequireAuth>
-                <Step2Drawing />
+                <Step2Redirect />
               </RequireAuth>
             }
           />
@@ -171,6 +177,22 @@ export default function App() {
             element={
               <RequireAuth>
                 <Step3Result />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/student/session/:sessionId/step4"
+            element={
+              <RequireAuth>
+                <Navigate to="/student/discussion" replace />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/student/discussion"
+            element={
+              <RequireAuth>
+                <Step4Discussion />
               </RequireAuth>
             }
           />

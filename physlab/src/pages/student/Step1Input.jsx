@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Grid8x8 from '../../components/Grid8x8.jsx'
 import EquipotentialMap from '../../components/EquipotentialMap.jsx'
-import { getSession, updateMeasurements, updateStep } from '../../services/firebase.js'
+import { getSession, updateMeasurements, saveDrawingResult } from '../../services/firebase.js'
+import { autoGenerateFieldLines } from '../../utils/fieldLine.js'
 
 /**
  * 숫자 키패드 모달 컴포넌트
@@ -236,9 +237,11 @@ export default function Step1Input() {
     if (measurements.length < 64) return
     setSaving(true)
     try {
+      // 측정값 저장 + 전기력선 자동 생성 → step 3으로 직행
+      const fieldLines = autoGenerateFieldLines(measurements, session?.electrodeConfig, 8)
       await updateMeasurements(sessionId, measurements)
-      await updateStep(sessionId, 2)
-      navigate(`/student/session/${sessionId}/step2`)
+      await saveDrawingResult(sessionId, fieldLines)  // step=3 설정
+      navigate(`/student/session/${sessionId}/step3`)
     } catch (err) {
       console.error(err)
       alert('저장 중 오류가 발생했습니다.')
@@ -295,7 +298,7 @@ export default function Step1Input() {
     if (neg) {
       const cx = Math.min(7, Math.max(0, Math.round(neg.x)))
       const cy = Math.min(7, Math.max(0, Math.round(neg.y)))
-      setMeasurements(prev => prev.filter(m => m.V === 0 && m.x === cx && m.y === cy))
+      setMeasurements(prev => prev.filter(m => m.x === cx && m.y === cy))
     } else {
       setMeasurements([])
     }
@@ -364,13 +367,16 @@ export default function Step1Input() {
 
       {/* 진행 단계 표시 */}
       <div className="bg-white border-b border-gray-100 px-4 py-2 flex items-center gap-2">
-        {[1, 2, 3].map((s) => (
-          <React.Fragment key={s}>
-            <div className={`flex items-center gap-1.5 text-xs font-medium ${s === 1 ? 'text-blue-600' : 'text-gray-400'}`}>
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${s === 1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>{s}</div>
-              {s === 1 ? '데이터 입력' : s === 2 ? '전기력선' : '3D 결과'}
+        {[
+          { n: 1, label: '데이터 입력' },
+          { n: 2, label: '3D 결과' },
+        ].map(({ n, label }, idx, arr) => (
+          <React.Fragment key={n}>
+            <div className={`flex items-center gap-1.5 text-xs font-medium ${n === 1 ? 'text-blue-600' : 'text-gray-400'}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${n === 1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>{n}</div>
+              {label}
             </div>
-            {s < 3 && <div className="flex-1 h-0.5 bg-gray-200 max-w-12" />}
+            {idx < arr.length - 1 && <div className="flex-1 h-0.5 bg-gray-200 max-w-12" />}
           </React.Fragment>
         ))}
       </div>
@@ -451,7 +457,7 @@ export default function Step1Input() {
                 저장 중...
               </span>
             ) : isComplete ? (
-              'Step 2 — 전기력선 그리기 →'
+              'Step 2 — 3D 결과 보기 →'
             ) : (
               `아직 ${64 - measurements.length}개 더 입력해야 합니다`
             )}

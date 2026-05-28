@@ -4,7 +4,7 @@ import EquipotentialMap from '../../components/EquipotentialMap.jsx'
 import Grid8x8 from '../../components/Grid8x8.jsx'
 import FieldLineCanvas from '../../components/FieldLineCanvas.jsx'
 import Surface3D from '../../components/Surface3D.jsx'
-import { getUser, subscribeStudentSessions } from '../../services/firebase.js'
+import { getUser, subscribeStudentSessions, deserializeLines } from '../../services/firebase.js'
 
 const EXP_LABELS = {
   point_electrode: '실험 1 — 점전극',
@@ -143,8 +143,7 @@ function SessionCard({ session }) {
               </h4>
               <FieldLineCanvas
                 measurements={measurements}
-                drawnLines={session.drawnLines || []}
-                aiLines={[]}
+                drawnLines={deserializeLines(session.drawnLines || [])}
                 width={280}
                 height={280}
                 electrodeConfig={session.electrodeConfig}
@@ -263,7 +262,7 @@ export default function StudentView() {
     return unsub
   }, [uid])
 
-  const completedSessions = sessions.filter(s => s.step === 3)
+  const completedSessions = sessions.filter(s => s.step >= 3)
   const activeSessions    = sessions.filter(s => timeDiffSec(s.updatedAt) < 120)
   const avgScore = completedSessions
     .filter(s => s.score != null)

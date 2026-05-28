@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import FieldLineCanvas from '../../components/FieldLineCanvas.jsx'
-import { getSession, saveDrawingResult, saveDrawingLines } from '../../services/firebase.js'
-import { idwInterpolate } from '../../services/interpolate.js'
-import { computeFieldLines, computePerpendicularScore } from '../../utils/fieldLine.js'
-import { computeContours } from '../../utils/equipotential.js'
+import { getSession, saveDrawingResult, saveDrawingLines, deserializeLines } from '../../services/firebase.js'
 
-const RESOLUTION = 50
 const CANVAS_SIZE = 350
 
 export default function Step2Drawing() {
@@ -14,48 +10,37 @@ export default function Step2Drawing() {
   const navigate = useNavigate()
   const [session, setSession] = useState(null)
   const [drawnLines, setDrawnLines] = useState([])
-  const [aiLines, setAiLines] = useState([])
-  const [score, setScore] = useState(null)
-  const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showGuide, setShowGuide] = useState(true)
-  const [autoSaveStatus, setAutoSaveStatus] = useState('idle') // 'idle' | 'saving' | 'saved'
+  const [autoSaveStatus, setAutoSaveStatus] = useState('idle')
 
-  // debounce 타이머 ref
-  const debounceTimer = useRef(null)
-  // 최신 drawnLines ref (beforeunload용)
-  const drawnLinesRef = useRef([])
+  const debounceTimer  = useRef(null)
+  const drawnLinesRef  = useRef([])
 
   useEffect(() => {
     getSession(sessionId).then((s) => {
       if (!s) { navigate('/student'); return }
       setSession(s)
-      // 이미 제출된 경우 복원
       if (s.drawnLines && s.drawnLines.length > 0) {
-        setDrawnLines(s.drawnLines)
-        drawnLinesRef.current = s.drawnLines
+        const loaded = deserializeLines(s.drawnLines)
+        setDrawnLines(loaded)
+        drawnLinesRef.current = loaded
       }
-      if (s.score !== null && s.score !== undefined) {
-        setScore(s.score)
-      }
+      // 이미 제출된 세션이면 step3로
       if (s.step >= 3) {
-        setSubmitted(true)
+        navigate(`/student/session/${sessionId}/step3`, { replace: true })
+        return
       }
       setLoading(false)
     })
   }, [sessionId])
 
-  // drawnLines 변경 시 debounce 자동저장 (2초) — 미제출 상태에서만
+  // 자동저장 (2초 debounce)
   useEffect(() => {
     if (loading) return
-    if (submitted) return
-    if (drawnLines.length === 0) return
 
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current)
-    }
-
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
     setAutoSaveStatus('saving')
 
     debounceTimer.current = setTimeout(async () => {
@@ -69,73 +54,56 @@ export default function Step2Drawing() {
       }
     }, 2000)
 
-    return () => {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current)
-    }
-  }, [drawnLines, loading, submitted, sessionId])
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current) }
+  }, [drawnLines, loading, sessionId])
 
-  // drawnLines ref 동기화
   useEffect(() => {
     drawnLinesRef.current = drawnLines
   }, [drawnLines])
 
-  // 페이지 이탈 시 마지막 상태 저장
   useEffect(() => {
     function handleBeforeUnload() {
-      if (!submitted && drawnLinesRef.current.length > 0) {
-        saveDrawingLines(sessionId, drawnLinesRef.current).catch(() => {})
-      }
+      saveDrawingLines(sessionId, drawnLinesRef.current).catch(() => {})
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [sessionId, submitted])
+  }, [sessionId])
 
   async function handleSubmit() {
     if (drawnLines.length === 0) {
       alert('전기력선을 최소 1개 이상 그려주세요.')
       return
     }
+
+    // 자동저장 타이머 취소 (동시 쓰기 방지)
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+
+    // 좌표 유효성 검사 (Firestore는 NaN/Infinity 허용 안 함)
+    const cleanLines = drawnLines
+      .map(line => line.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)))
+      .filter(line => line.length > 1)
+
+    if (cleanLines.length === 0) {
+      alert('유효한 전기력선이 없습니다. 다시 그려주세요.')
+      return
+    }
+
     setSubmitting(true)
     try {
-      const measurements = session.measurements || []
-      const grid = idwInterpolate(measurements, RESOLUTION)
-
-      // AI 전기력선 계산
-      const computedAiLines = computeFieldLines(
-        grid,
-        RESOLUTION,
-        session.electrodeConfig,
-        16
-      )
-      setAiLines(computedAiLines)
-
-      // 수직도 점수 계산
-      const contourData = computeContours(grid, RESOLUTION, 12)
-      const computedScore = computePerpendicularScore(
-        drawnLines,
-        contourData,
-        CANVAS_SIZE,
-        CANVAS_SIZE
-      )
-      setScore(computedScore)
-      setSubmitted(true)
-
-      // Firestore 저장
-      await saveDrawingResult(sessionId, drawnLines, computedScore)
+      await saveDrawingResult(sessionId, cleanLines)
+      navigate(`/student/session/${sessionId}/step3`)
     } catch (err) {
       console.error('제출 오류:', err)
-      alert('제출 중 오류가 발생했습니다.')
-    } finally {
+      alert(`제출 오류: ${err?.message || err?.code || String(err)}`)
       setSubmitting(false)
     }
   }
 
-  async function handleNext() {
-    navigate(`/student/session/${sessionId}/step3`)
+  function handleUndo() {
+    setDrawnLines(prev => prev.slice(0, -1))
   }
 
-  function handleClearDrawing() {
-    if (submitted) return
+  function handleClear() {
     setDrawnLines([])
   }
 
@@ -149,26 +117,6 @@ export default function Step2Drawing() {
 
   const EXP_LABEL = session?.experimentType === 'line_electrode' ? '실험 2 — 선전극' : '실험 1 — 점전극'
 
-  function ScoreBadge({ score }) {
-    const color =
-      score >= 80 ? 'bg-green-100 text-green-700 border-green-200' :
-      score >= 60 ? 'bg-yellow-100 text-yellow-700 border-yellow-200' :
-                   'bg-red-100 text-red-700 border-red-200'
-    const label =
-      score >= 80 ? '우수' :
-      score >= 60 ? '양호' :
-                   '노력 필요'
-
-    return (
-      <div className={`border-2 rounded-2xl px-6 py-4 text-center ${color}`}>
-        <p className="text-4xl font-black">{score}</p>
-        <p className="text-sm font-semibold">점 / 100점</p>
-        <p className="text-xs mt-1 font-medium">{label}</p>
-      </div>
-    )
-  }
-
-  // 저장 상태 표시 UI
   function AutoSaveBadge() {
     if (autoSaveStatus === 'saving') {
       return (
@@ -210,25 +158,27 @@ export default function Step2Drawing() {
             <span className="text-xs text-gray-500">전기력선 그리기</span>
           </div>
         </div>
-        {/* 자동저장 상태 (미제출 상태에서만) */}
-        {!submitted && (
-          <div className="ml-auto">
-            <AutoSaveBadge />
-          </div>
-        )}
+        <div className="ml-auto">
+          <AutoSaveBadge />
+        </div>
       </header>
 
-      {/* 진행 단계 표시 */}
+      {/* 진행 단계 */}
       <div className="bg-white border-b border-gray-100 px-4 py-2 flex items-center gap-2">
-        {[1, 2, 3].map((s) => (
-          <React.Fragment key={s}>
-            <div className={`flex items-center gap-1.5 text-xs font-medium ${s === 2 ? 'text-purple-600' : s < 2 ? 'text-green-600' : 'text-gray-400'}`}>
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${s === 2 ? 'bg-purple-600 text-white' : s < 2 ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
-                {s < 2 ? '✓' : s}
+        {[
+          { n: 1, label: '데이터 입력' },
+          { n: 2, label: '전기력선' },
+          { n: 3, label: '3D 결과' },
+          { n: 4, label: '토론' },
+        ].map(({ n, label }, idx, arr) => (
+          <React.Fragment key={n}>
+            <div className={`flex items-center gap-1.5 text-xs font-medium ${n === 2 ? 'text-purple-600' : n < 2 ? 'text-green-600' : 'text-gray-400'}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${n === 2 ? 'bg-purple-600 text-white' : n < 2 ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                {n < 2 ? '✓' : n}
               </div>
-              {s === 1 ? '데이터 입력' : s === 2 ? '전기력선' : '3D 결과'}
+              <span className="hidden sm:inline">{label}</span>
             </div>
-            {s < 3 && <div className="flex-1 h-0.5 bg-gray-200 max-w-12" />}
+            {idx < arr.length - 1 && <div className="flex-1 h-0.5 bg-gray-200 max-w-8" />}
           </React.Fragment>
         ))}
       </div>
@@ -238,59 +188,92 @@ export default function Step2Drawing() {
           {/* 캔버스 영역 */}
           <div className="flex-shrink-0">
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200">
-              <h2 className="text-sm font-semibold text-gray-700 mb-1">
-                {submitted ? '전기력선 비교 결과' : '전기력선 드로잉'}
-              </h2>
-              {!submitted && (
-                <p className="text-xs text-gray-400 mb-3">
-                  손가락 또는 마우스로 등전위선에 수직인 전기력선을 그리세요.
-                </p>
-              )}
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">전기력선 드로잉</h2>
+              <p className="text-xs text-gray-400 mb-3">
+                손가락 또는 마우스로 등전위선과 수직인 방향으로 그리세요.
+              </p>
 
               <FieldLineCanvas
                 measurements={session?.measurements || []}
                 drawnLines={drawnLines}
-                aiLines={aiLines}
                 onDraw={setDrawnLines}
                 width={CANVAS_SIZE}
                 height={CANVAS_SIZE}
                 electrodeConfig={session?.electrodeConfig}
-                readOnly={submitted}
               />
 
-              {/* 버튼 영역 */}
-              {!submitted && (
-                <div className="flex gap-2 mt-3">
-                  <button
-                    onClick={handleClearDrawing}
-                    disabled={drawnLines.length === 0}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    초기화
-                  </button>
-                  <button
-                    onClick={handleSubmit}
-                    disabled={drawnLines.length === 0 || submitting}
-                    className="flex-2 flex-grow py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {submitting ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        AI 계산 중...
-                      </span>
-                    ) : (
-                      '제출 → AI 비교'
-                    )}
-                  </button>
-                </div>
-              )}
+              {/* 캔버스 아래 버튼 */}
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={handleUndo}
+                  disabled={drawnLines.length === 0}
+                  className="px-3 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  title="마지막 선 취소"
+                >
+                  ↩ 되돌리기
+                </button>
+                <button
+                  onClick={handleClear}
+                  disabled={drawnLines.length === 0}
+                  className="px-3 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-red-50 hover:border-red-200 hover:text-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  전체 초기화
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={drawnLines.length === 0 || submitting}
+                  className="flex-grow py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {submitting ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      저장 중...
+                    </span>
+                  ) : (
+                    '제출 완료 →'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* 결과 패널 */}
+          {/* 오른쪽 패널 */}
           <div className="flex-1 flex flex-col gap-4">
-            {/* 가이드 (제출 전) */}
-            {!submitted && showGuide && (
+            {/* 그린 선 현황 */}
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600 font-medium">그린 선 수</span>
+                <span className="text-3xl font-black text-purple-600">{drawnLines.length}</span>
+              </div>
+              <div className="mt-3 h-2 bg-gray-100 rounded-full">
+                <div
+                  className="h-2 bg-purple-500 rounded-full transition-all"
+                  style={{ width: `${Math.min(100, (drawnLines.length / 8) * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">권장: 8개 이상</p>
+
+              {/* 선별 삭제 */}
+              {drawnLines.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <p className="text-xs text-gray-500 mb-2">선 개별 삭제</p>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                    {drawnLines.map((_, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setDrawnLines(prev => prev.filter((_, i) => i !== idx))}
+                        className="flex items-center gap-1 text-xs bg-purple-50 hover:bg-red-50 border border-purple-200 hover:border-red-300 text-purple-700 hover:text-red-600 rounded-lg px-2 py-1 transition-colors"
+                      >
+                        선 {idx + 1} ✕
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 드로잉 가이드 */}
+            {showGuide && (
               <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
                 <div className="flex justify-between items-start mb-2">
                   <h3 className="text-sm font-bold text-blue-800">드로잉 안내</h3>
@@ -311,57 +294,10 @@ export default function Step2Drawing() {
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-blue-400 mt-0.5">•</span>
-                    잘못 그렸으면 <strong>초기화</strong> 버튼으로 다시 시작하세요.
+                    잘못 그린 선은 <strong>되돌리기</strong> 또는 <strong>선 개별 삭제</strong>로 지우세요.
                   </li>
                 </ul>
               </div>
-            )}
-
-            {/* 점수 표시 (제출 후) */}
-            {submitted && score !== null && (
-              <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
-                <h3 className="text-sm font-bold text-gray-700 mb-4">수직도 평가 결과</h3>
-                <div className="flex items-center gap-4">
-                  <ScoreBadge score={score} />
-                  <div className="flex-1 text-sm text-gray-600 space-y-2">
-                    <p>등전위선과 전기력선이 이루는 각도를 분석했습니다.</p>
-                    <p className="text-xs text-gray-400">
-                      파란 선: 학생 드로잉<br />
-                      빨간 선: AI 계산 정답
-                    </p>
-                    {score >= 80 && <p className="text-green-600 font-medium text-xs">훌륭합니다! 전기력선을 잘 그렸습니다.</p>}
-                    {score >= 60 && score < 80 && <p className="text-yellow-600 font-medium text-xs">양호합니다. AI 정답과 비교해보세요.</p>}
-                    {score < 60 && <p className="text-red-600 font-medium text-xs">등전위선과의 수직 관계를 다시 확인해보세요.</p>}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* 상태 표시 (드로잉 중) */}
-            {!submitted && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">그린 선 수</span>
-                  <span className="text-2xl font-bold text-purple-600">{drawnLines.length}</span>
-                </div>
-                <div className="mt-3 h-1.5 bg-gray-100 rounded-full">
-                  <div
-                    className="h-1.5 bg-purple-500 rounded-full transition-all"
-                    style={{ width: `${Math.min(100, (drawnLines.length / 8) * 100)}%` }}
-                  />
-                </div>
-                <p className="text-xs text-gray-400 mt-1.5">권장: 8개 이상</p>
-              </div>
-            )}
-
-            {/* 다음 단계 버튼 */}
-            {submitted && (
-              <button
-                onClick={handleNext}
-                className="w-full py-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg transition-all shadow-lg hover:shadow-xl active:scale-98"
-              >
-                Step 3 — 3D 결과 보기 →
-              </button>
             )}
           </div>
         </div>
