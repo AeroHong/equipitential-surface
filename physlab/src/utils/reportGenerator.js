@@ -5,90 +5,62 @@ const A4_W = 210  // mm
 const A4_H = 297  // mm
 const MARGIN = 15 // mm
 
-/**
- * SVG 요소를 PNG Data URL로 변환
- */
-async function svgToDataUrl(svgEl, scale = 2) {
-  const svgStr = new XMLSerializer().serializeToString(svgEl)
-  const blob = new Blob([svgStr], { type: 'image/svg+xml' })
-  const url = URL.createObjectURL(blob)
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width  = svgEl.clientWidth  * scale
-      canvas.height = svgEl.clientHeight * scale
-      const ctx = canvas.getContext('2d')
-      ctx.scale(scale, scale)
-      ctx.drawImage(img, 0, 0)
-      URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/png'))
-    }
-    img.onerror = reject
-    img.src = url
-  })
-}
-
-/**
- * Plotly 차트 DOM 요소에서 이미지 추출
- */
-async function plotlyToDataUrl(plotEl, w = 600, h = 350) {
-  if (!plotEl || !window.Plotly) return null
-  try {
-    return await window.Plotly.toImage(plotEl, { format: 'png', width: w, height: h })
-  } catch {
-    return null
-  }
-}
-
-/**
- * 한글 폰트 없이 jsPDF가 한글을 올바르게 표현할 수 없으므로
- * html2canvas로 DOM 섹션을 캡처해서 이미지로 삽입합니다.
- *
- * @param {HTMLElement} reportEl - 숨겨진 보고서 DOM 요소
- * @param {string} filename
- */
-export async function generatePDFFromElement(reportEl, filename = '보고서.pdf') {
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const pageW = A4_W - MARGIN * 2
-  const pageH = A4_H - MARGIN * 2
-
-  // 첫 페이지: 전체 캡처
-  const canvas = await html2canvas(reportEl, {
+async function captureElement(el) {
+  return html2canvas(el, {
     scale: 2,
     useCORS: true,
     backgroundColor: '#ffffff',
     logging: false,
+    windowWidth: el.scrollWidth,
   })
+}
 
-  const imgData = canvas.toDataURL('image/png')
+function addCanvasToPdf(pdf, canvas, pageW, pageH) {
   const imgW = pageW
   const imgH = (canvas.height / canvas.width) * imgW
 
-  let y = MARGIN
-  let remainH = imgH
+  if (imgH <= pageH) {
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', MARGIN, MARGIN, imgW, imgH)
+    return
+  }
 
-  // 페이지 분할: imgH가 pageH를 넘으면 여러 페이지로
-  const totalPages = Math.ceil(imgH / pageH)
-  for (let page = 0; page < totalPages; page++) {
-    if (page > 0) { pdf.addPage(); y = MARGIN }
-    const srcY = page * (canvas.height / totalPages)
-    const srcH = canvas.height / totalPages
+  // 내용이 한 페이지를 넘으면 분할
+  const totalSubPages = Math.ceil(imgH / pageH)
+  for (let p = 0; p < totalSubPages; p++) {
+    if (p > 0) pdf.addPage()
+    const srcY = Math.round((p / totalSubPages) * canvas.height)
+    const srcH = Math.round(canvas.height / totalSubPages)
+    const slice = document.createElement('canvas')
+    slice.width  = canvas.width
+    slice.height = srcH
+    slice.getContext('2d').drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH)
+    const sliceH = Math.min(pageH, imgH - p * pageH)
+    pdf.addImage(slice.toDataURL('image/png'), 'PNG', MARGIN, MARGIN, imgW, sliceH)
+  }
+}
 
-    // 잘라낸 영역만 새 캔버스에 그려서 삽입
-    const sliceCanvas = document.createElement('canvas')
-    sliceCanvas.width  = canvas.width
-    sliceCanvas.height = srcH
-    const sCtx = sliceCanvas.getContext('2d')
-    sCtx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH)
+/**
+ * 여러 DOM 섹션을 각각 한 페이지씩 캡처해 PDF로 생성합니다.
+ * @param {HTMLElement[]} sections
+ * @param {string} filename
+ */
+export async function generateMultiPagePDF(sections, filename = '보고서.pdf') {
+  const pdf    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageW  = A4_W - MARGIN * 2
+  const pageH  = A4_H - MARGIN * 2
 
-    const sliceData = sliceCanvas.toDataURL('image/png')
-    const sliceH = Math.min(pageH, remainH)
-    pdf.addImage(sliceData, 'PNG', MARGIN, y, imgW, sliceH)
-    remainH -= sliceH
+  for (let i = 0; i < sections.length; i++) {
+    if (i > 0) pdf.addPage()
+    const canvas = await captureElement(sections[i])
+    addCanvasToPdf(pdf, canvas, pageW, pageH)
   }
 
   pdf.save(filename)
+}
+
+// 하위 호환용 단일 페이지 함수
+export async function generatePDFFromElement(reportEl, filename = '보고서.pdf') {
+  await generateMultiPagePDF([reportEl], filename)
 }
 
 /**

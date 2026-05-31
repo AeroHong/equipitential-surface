@@ -8,7 +8,7 @@ import {
 import Surface3D from '../../components/Surface3D.jsx'
 import EquipotentialMap from '../../components/EquipotentialMap.jsx'
 import FieldLineCanvas from '../../components/FieldLineCanvas.jsx'
-import { generatePDFFromElement } from '../../utils/reportGenerator.js'
+import { generateMultiPagePDF } from '../../utils/reportGenerator.js'
 
 export default function DiscussionPage() {
   const navigate  = useNavigate()
@@ -23,13 +23,13 @@ export default function DiscussionPage() {
   const [generating, setGenerating]     = useState(false)
   const [chartWidth, setChartWidth]     = useState(600)
 
-  // 학번 / 이름 (로컬 입력, PDF 헤더용)
   const [studentId,   setStudentId]   = useState('')
   const [studentName, setStudentName] = useState('')
 
-  const debounceRef    = useRef(null)
-  const reportRef      = useRef(null)
-  const surface3dRef   = useRef(null)
+  const debounceRef  = useRef(null)
+  const page1Ref     = useRef(null)   // PDF 1페이지: 헤더 + 3D 지형도
+  const page2Ref     = useRef(null)   // PDF 2페이지: 등전위선 + 토론
+  const surface3dRef = useRef(null)
 
   useEffect(() => {
     function updateSize() { setChartWidth(Math.min(window.innerWidth - 32, 800)) }
@@ -54,9 +54,13 @@ export default function DiscussionPage() {
     }).catch(() => setLoading(false))
   }, [user])
 
-  function handleChange(qid, text) {
+  function handleChange(qid, text, el) {
     const updated = { ...answers, [qid]: text }
     setAnswers(updated)
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    }
     setSaveStatus('saving')
     clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
@@ -74,37 +78,67 @@ export default function DiscussionPage() {
   }
 
   async function handleDownloadReport() {
-    if (!reportRef.current) return
+    if (!page1Ref.current || !page2Ref.current) return
     setGenerating(true)
     try {
-      // Plotly 3D 차트를 정적 이미지로 교체 (WebGL은 html2canvas가 캡처 못함)
+      // 1. Plotly 3D 차트 → 정적 이미지로 교체 (WebGL은 html2canvas가 못 잡음)
       const plotEl = surface3dRef.current?.querySelector('.js-plotly-plot')
       let tempImg = null
       if (plotEl && window.Plotly) {
         try {
           const imgUrl = await window.Plotly.toImage(plotEl, {
             format: 'png',
-            width: Math.min(chartWidth, 760),
-            height: 380,
+            width: Math.min(chartWidth, 720),
+            height: 360,
           })
           tempImg = document.createElement('img')
           tempImg.src = imgUrl
           tempImg.style.cssText = 'width:100%;border-radius:8px;display:block'
-          plotEl.style.visibility = 'hidden'
+          plotEl.style.display = 'none'
           surface3dRef.current.appendChild(tempImg)
         } catch {}
       }
 
+      // 2. textarea → div 교체 (html2canvas가 textarea 줄바꿈을 캡처 못함)
+      const textareas = page2Ref.current.querySelectorAll('textarea')
+      const taReplacements = []
+      textareas.forEach(ta => {
+        const cs = window.getComputedStyle(ta)
+        const div = document.createElement('div')
+        div.style.fontFamily   = cs.fontFamily
+        div.style.fontSize     = cs.fontSize
+        div.style.color        = cs.color
+        div.style.background   = cs.backgroundColor
+        div.style.border       = cs.border
+        div.style.borderRadius = cs.borderRadius
+        div.style.padding      = cs.padding
+        div.style.width        = ta.offsetWidth + 'px'
+        div.style.marginLeft   = cs.marginLeft
+        div.style.whiteSpace   = 'pre-wrap'
+        div.style.wordBreak    = 'break-word'
+        div.style.lineHeight   = cs.lineHeight
+        div.style.boxSizing    = 'border-box'
+        div.style.minHeight    = ta.offsetHeight + 'px'
+        div.textContent = ta.value || ''
+        ta.parentNode.insertBefore(div, ta)
+        ta.style.display = 'none'
+        taReplacements.push({ ta, div })
+      })
+
       const name = (studentName || '학생').trim()
       const id   = (studentId   || '').trim()
-      await generatePDFFromElement(
-        reportRef.current,
+      await generateMultiPagePDF(
+        [page1Ref.current, page2Ref.current],
         `${id ? id + '_' : ''}${name}_등전위면_보고서.pdf`
       )
 
       // 복원
       if (tempImg) surface3dRef.current.removeChild(tempImg)
-      if (plotEl)  plotEl.style.visibility = ''
+      if (plotEl)  plotEl.style.display = ''
+      taReplacements.forEach(({ ta, div }) => {
+        ta.style.display = ''
+        div.remove()
+      })
     } catch (err) {
       console.error('보고서 생성 실패:', err)
       alert('보고서 생성 중 오류가 발생했습니다.')
@@ -128,7 +162,7 @@ export default function DiscussionPage() {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
 
-      {/* ── 네비게이션 헤더 (보고서 밖) ── */}
+      {/* 네비게이션 헤더 */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm sticky top-0 z-10">
         <button onClick={() => navigate('/student')} className="text-gray-400 hover:text-gray-600">
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -160,10 +194,10 @@ export default function DiscussionPage() {
       <main className="flex-1 p-4">
         <div className="max-w-4xl mx-auto space-y-4">
 
-          {/* ══════════════════════════════════════
-              보고서 영역 (이 div 전체가 PDF로 캡처됨)
-          ══════════════════════════════════════ */}
-          <div ref={reportRef} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          {/* ══════════════════════════════════
+              PDF 1페이지: 보고서 헤더 + 3D 지형도
+          ══════════════════════════════════ */}
+          <div ref={page1Ref} className="bg-white rounded-2xl shadow-sm overflow-hidden">
 
             {/* 보고서 헤더 */}
             <div className="bg-indigo-700 px-6 py-4 flex items-center justify-between">
@@ -201,7 +235,7 @@ export default function DiscussionPage() {
             </div>
 
             {/* 3D 전위 지형도 */}
-            <div className="px-6 py-5 border-b border-gray-100">
+            <div className="px-6 py-5">
               <h3 className="text-sm font-bold text-gray-700 mb-3">3D 전위 지형도</h3>
               <div ref={surface3dRef} className="overflow-x-auto">
                 <Surface3D
@@ -210,15 +244,24 @@ export default function DiscussionPage() {
                   title1="실험 1 — 점전극"
                   title2="실험 2 — 선전극"
                   width={Math.min(chartWidth, 760)}
-                  height={380}
+                  height={360}
                 />
               </div>
             </div>
 
+          </div>
+          {/* ── PDF 1페이지 끝 ── */}
+
+          {/* ══════════════════════════════════
+              PDF 2페이지: 등전위선 비교 + 토론 답변
+          ══════════════════════════════════ */}
+          <div ref={page2Ref} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+
             {/* 등전위선 + 전기력선 비교 */}
             <div className="px-6 py-5 border-b border-gray-100">
-              <h3 className="text-sm font-bold text-gray-700 mb-4">등전위선 & 전기력선 비교</h3>
+              <h3 className="text-sm font-bold text-gray-700 mb-4">등전위선 &amp; 전기력선 비교</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+
                 {/* 실험 1 — 점전극 */}
                 <div className="flex flex-col items-center gap-3">
                   <p className="text-xs font-semibold text-red-700 bg-red-50 px-3 py-1 rounded-full">
@@ -272,6 +315,7 @@ export default function DiscussionPage() {
                     </div>
                   )}
                 </div>
+
               </div>
             </div>
 
@@ -304,11 +348,17 @@ export default function DiscussionPage() {
                         </div>
                         <textarea
                           value={answers[q.id] || ''}
-                          onChange={e => handleChange(q.id, e.target.value)}
+                          onChange={e => handleChange(q.id, e.target.value, e.target)}
+                          ref={el => {
+                            if (el) {
+                              el.style.height = 'auto'
+                              el.style.height = el.scrollHeight + 'px'
+                            }
+                          }}
                           placeholder="답을 입력하세요..."
                           rows={3}
                           className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent resize-none ml-8"
-                          style={{ width: 'calc(100% - 2rem)' }}
+                          style={{ width: 'calc(100% - 2rem)', overflow: 'hidden', minHeight: '4.5rem' }}
                         />
                       </div>
                     )
@@ -318,9 +368,9 @@ export default function DiscussionPage() {
             </div>
 
           </div>
-          {/* ── 보고서 영역 끝 ── */}
+          {/* ── PDF 2페이지 끝 ── */}
 
-          {/* 액션 버튼 (보고서 밖, PDF에 미포함) */}
+          {/* 액션 버튼 (PDF 미포함) */}
           <button
             onClick={handleDownloadReport}
             disabled={generating}
