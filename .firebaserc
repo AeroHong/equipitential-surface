@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "default": "equipotential-surface"
+  },
+  "targets": {
+    "equipotential-surface": {
+      "hosting": {
+        "physlab": [
+          "equipotential-surface"
+        ],
+        "essay": [
+          "essay-hck"
+        ]
+      }
+    }
+  }
+}

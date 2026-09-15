@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 사용자 문서
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if request.auth != null && (request.auth.uid == uid || isAdmin());
+    }
+
+    // 세션 문서
+    match /sessions/{sessionId} {
+      allow read: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
+      allow create: if request.auth != null && request.resource.data.studentUid == request.auth.uid;
+      allow update: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
+      allow delete: if request.auth != null && (resource.data.studentUid == request.auth.uid || isAdmin());
+    }
+
+    // 토론 답변 문서 (uid별 1개)
+    match /discussions/{uid} {
+      allow read, write: if request.auth != null && (request.auth.uid == uid || isAdmin());
+    }
+
+    // 설정 문서 (토론 질문 등): 인증된 사용자 읽기, admin만 쓰기
+    match /settings/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && isAdmin();
+    }
+
+    // ── 서술형 수행평가 작성 플랫폼 ──────────────────────────────
+
+    // 지문: 인증된 사용자 읽기, admin만 쓰기
+    match /essayPassages/{id} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && isAdmin();
+    }
+
+    // 배정: 인증된 사용자 읽기, admin만 쓰기
+    match /essayAssignments/{id} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && isAdmin();
+    }
+
+    // 제출물: 본인 또는 admin만 접근. 학생은 본인 uid 문서만, 그리고 status가
+    // 'submitted'로 잠기기 전까지만 수정 가능 — 제출 후 잠금을 클라이언트 UI뿐 아니라
+    // 규칙에서도 강제해, devtools로 직접 호출해도 우회할 수 없게 한다.
+    match /essaySubmissions/{id} {
+      // 학생의 첫 접속에서는 문서 존재 여부를 먼저 확인한다. 존재하지 않는 문서에
+      // resource.data를 참조하면 규칙 평가 자체가 실패하므로, get에 한해서는 빈 문서
+      // 조회를 허용한다. 실제 존재하는 제출물의 get/list는 계속 본인 또는 admin만 가능하다.
+      allow get: if request.auth != null &&
+        (!exists(/databases/$(database)/documents/essaySubmissions/$(id)) ||
+          resource.data.studentUid == request.auth.uid || isAdmin());
+      allow list: if request.auth != null && isAdmin();
+      allow create: if request.auth != null && request.resource.data.studentUid == request.auth.uid;
+      allow update: if request.auth != null &&
+        ((resource.data.studentUid == request.auth.uid && resource.data.status != 'submitted') || isAdmin());
+
+      // 작성 로그(input/keydown/paste) 서브컬렉션: 본인 또는 admin, 제출 잠금 전까지만 작성 가능
+      match /{sub=**} {
+        allow read: if request.auth != null &&
+          (get(/databases/$(database)/documents/essaySubmissions/$(id)).data.studentUid == request.auth.uid || isAdmin());
+        allow write: if request.auth != null && ownsOpenSubmission(id);
+      }
+    }
+
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+
+    function ownsOpenSubmission(id) {
+      let sub = get(/databases/$(database)/documents/essaySubmissions/$(id)).data;
+      return sub.studentUid == request.auth.uid && sub.status != 'submitted';
+    }
+  }
+}

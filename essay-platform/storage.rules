@@ -1,0 +1,19 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null &&
+        (
+          // 기본 권한 모델: Firestore users 문서의 관리자 역할
+          firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'super_admin' ||
+          // Storage 최초 운영 계정: Firebase Auth 이메일로도 명시 허용
+          request.auth.token.email == 'hckgood@seonyoo.hs.kr'
+        );
+    }
+
+    match /essayPassages/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+  }
+}
