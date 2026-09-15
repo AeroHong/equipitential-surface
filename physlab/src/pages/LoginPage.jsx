@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { signInWithPopup } from 'firebase/auth'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase.js'
@@ -10,6 +10,7 @@ const ALLOWED_DOMAIN = 'seonyoo.hs.kr'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -33,6 +34,9 @@ export default function LoginPage() {
       const userRef = doc(db, 'users', user.uid)
       const userSnap = await getDoc(userRef)
 
+      // RequireAuth/RequireAdmin이 넘겨준 원래 목적지(예: /essay/write/:id)가 있으면 우선 이동
+      const from = location.state?.from?.pathname
+
       if (!userSnap.exists()) {
         // 신규 사용자 → student로 생성
         await setDoc(userRef, {
@@ -44,13 +48,15 @@ export default function LoginPage() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         })
-        navigate('/student')
+        navigate(from || '/student')
       } else {
         const data = userSnap.data()
         // updatedAt 갱신
         await setDoc(userRef, { updatedAt: serverTimestamp() }, { merge: true })
 
-        if (data.role === 'super_admin') {
+        if (from) {
+          navigate(from)
+        } else if (data.role === 'super_admin') {
           navigate('/admin')
         } else {
           navigate('/student')

@@ -611,6 +611,14 @@ export default function Dashboard() {
           >
             💬 질문 관리
           </button>
+          <a
+            href="https://essay-hck.web.app/admin"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded-lg px-3 py-1.5 hover:bg-purple-50 font-medium transition-colors"
+          >
+            ✍️ 서술형 평가 ↗
+          </a>
           <span className="text-sm text-gray-600 hidden sm:block">{userInfo?.name || user?.displayName}</span>
           <button onClick={async () => { await signOut(auth); navigate('/login') }}
             className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
