@@ -10,3 +10,38 @@
 html, body {
   overscroll-behavior: none;
 }
+
+/* DOCX에서 가져온 지문 본문(sanitizeHtml.js가 허용한 태그만 통과)의 문단/서식 스타일 */
+.passage-rich p {
+  margin-bottom: 0.9em;
+}
+.passage-rich h1, .passage-rich h2, .passage-rich h3, .passage-rich h4 {
+  font-weight: 700;
+  color: #111827;
+  margin: 1.1em 0 0.5em;
+}
+.passage-rich h1 { font-size: 1.15rem; }
+.passage-rich h2 { font-size: 1.08rem; }
+.passage-rich h3, .passage-rich h4 { font-size: 1rem; }
+.passage-rich ul, .passage-rich ol {
+  margin: 0 0 0.9em 1.25em;
+}
+.passage-rich ul { list-style: disc; }
+.passage-rich ol { list-style: decimal; }
+.passage-rich li { margin-bottom: 0.3em; }
+.passage-rich blockquote {
+  border-left: 3px solid #e5e7eb;
+  padding-left: 0.9em;
+  color: #6b7280;
+  margin: 0 0 0.9em;
+}
+.passage-rich img {
+  max-width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  margin: 0.5em 0;
+}
+.passage-rich strong, .passage-rich b {
+  font-weight: 700;
+  color: #1f2937;
+}

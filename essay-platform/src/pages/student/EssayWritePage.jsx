@@ -153,26 +153,36 @@ export default function EssayWritePage() {
         </p>
       </div>
 
-      <main className="flex-1 p-4 max-w-6xl mx-auto w-full">
+      <main className="flex-1 p-4 max-w-6xl mx-auto w-full min-h-0">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-160px)]">
-          <div className="h-[50vh] lg:h-full">
+          {/* min-h-0: flex/grid 항목은 기본적으로 내용 높이만큼 늘어나려 해서, 지정한 높이(h-full) 안에서
+              PassageViewer 자체의 overflow-y-auto가 실제로 동작하려면 이 min-h-0이 꼭 필요하다. */}
+          <div className="min-h-0 h-[50vh] lg:h-full">
             <PassageViewer passage={passage} />
           </div>
-          <div className="flex flex-col h-[60vh] lg:h-full">
-            <EssayEditor
-              value={text}
-              onChange={handleChange}
-              disabled={locked}
-              wordLimitGuide={wordLimit}
-              onLogInput={logInput}
-              onLogKeydown={logKeydown}
-              onLogPaste={logPaste}
-            />
+          <div className="flex flex-col min-h-0 h-[60vh] lg:h-full">
+            {passage?.questionPrompt && (
+              <div className="flex-shrink-0 rounded-xl bg-indigo-50 border border-indigo-100 p-3 mb-3">
+                <p className="text-xs font-bold text-indigo-700 mb-1">📝 논술 문항</p>
+                <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{passage.questionPrompt}</p>
+              </div>
+            )}
+            <div className="flex-1 min-h-0">
+              <EssayEditor
+                value={text}
+                onChange={handleChange}
+                disabled={locked}
+                wordLimitGuide={wordLimit}
+                onLogInput={logInput}
+                onLogKeydown={logKeydown}
+                onLogPaste={logPaste}
+              />
+            </div>
             {!locked && (
               <button
                 onClick={handleSubmit}
                 disabled={submitting || text.trim().length === 0}
-                className="mt-3 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-40 transition-colors active:scale-95"
+                className="mt-3 flex-shrink-0 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-40 transition-colors active:scale-95"
               >
                 {submitting ? '제출 중...' : '제출하기'}
               </button>

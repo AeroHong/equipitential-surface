@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { getPassage, createPassage, updatePassage } from '../../services/essay.js'
 import { importPassageDocx } from '../../services/docxImport.js'
 
-const emptyForm = { title: '', bodyText: '', imageUrls: [''], videoUrl: '', questionPrompt: '', wordLimitGuide: 800 }
+const emptyForm = { title: '', bodyText: '', bodyHtml: '', imageUrls: [''], videoUrl: '', questionPrompt: '', wordLimitGuide: 800 }
 
 export default function PassageEditor() {
   const navigate = useNavigate()
@@ -58,9 +58,9 @@ export default function PassageEditor() {
         ...prev,
         title: imported.title || prev.title,
         bodyText: imported.bodyText || prev.bodyText,
-        imageUrls: imported.imageUrls.length ? imported.imageUrls : prev.imageUrls
+        bodyHtml: imported.bodyHtml || ''
       }))
-      setImportNotice(`본문 ${imported.bodyText ? '및 ' : ''}이미지 ${imported.imageUrls.length}개를 불러왔습니다. 저장 전에 내용을 검토해주세요.`)
+      setImportNotice('문서의 문단·서식·이미지를 불러왔습니다. 아래 미리보기에서 내용을 검토한 뒤 저장하세요.')
     } catch (err) {
       console.error('DOCX 불러오기 실패:', err)
       setImportError(err.message || 'DOCX를 불러오지 못했습니다.')
@@ -79,6 +79,7 @@ export default function PassageEditor() {
       const payload = {
         title: form.title.trim(),
         bodyText: form.bodyText,
+        bodyHtml: form.bodyHtml || '',
         imageUrls: form.imageUrls.map(u => u.trim()).filter(Boolean),
         videoUrl: form.videoUrl.trim(),
         questionPrompt: form.questionPrompt,
@@ -137,10 +138,28 @@ export default function PassageEditor() {
           <input className={inputClass} value={form.title} onChange={e => set('title', e.target.value)} placeholder="예: 밀리컨의 기름방울 실험" />
         </div>
 
-        <div>
-          <label className={labelClass}>본문 (지문 텍스트)</label>
-          <textarea className={`${inputClass} resize-none`} rows={10} value={form.bodyText} onChange={e => set('bodyText', e.target.value)} placeholder="학생에게 보여줄 읽기자료 본문을 입력하세요." />
-        </div>
+        {form.bodyHtml ? (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className={labelClass}>본문 미리보기 (DOCX 서식 적용됨)</label>
+              <button
+                onClick={() => set('bodyHtml', '')}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                서식 제거하고 일반 텍스트로 전환
+              </button>
+            </div>
+            <div
+              className="passage-rich max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm"
+              dangerouslySetInnerHTML={{ __html: form.bodyHtml }}
+            />
+          </div>
+        ) : (
+          <div>
+            <label className={labelClass}>본문 (지문 텍스트)</label>
+            <textarea className={`${inputClass} resize-none`} rows={10} value={form.bodyText} onChange={e => set('bodyText', e.target.value)} placeholder="학생에게 보여줄 읽기자료 본문을 입력하세요." />
+          </div>
+        )}
 
         <div>
           <label className={labelClass}>이미지 URL (선택)</label>

@@ -26,6 +26,7 @@ export async function createPassage(data) {
   const docRef = await addDoc(collection(db, 'essayPassages'), {
     title: data.title || '',
     bodyText: data.bodyText || '',
+    bodyHtml: data.bodyHtml || '',
     imageUrls: data.imageUrls || [],
     videoUrl: data.videoUrl || '',
     questionPrompt: data.questionPrompt || '',

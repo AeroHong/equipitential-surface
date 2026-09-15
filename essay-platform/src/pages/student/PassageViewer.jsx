@@ -1,4 +1,5 @@
 import React from 'react'
+import { sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
 
 function toYoutubeEmbedUrl(url) {
   if (!url) return null
@@ -53,19 +54,20 @@ export default function PassageViewer({ passage }) {
         )
       )}
 
-      {(passage.imageUrls || []).map((url, i) => (
-        <img key={i} src={url} alt="" className="w-full rounded-xl border border-gray-200 mb-4" />
-      ))}
-
-      <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 mb-5">
-        {passage.bodyText}
-      </div>
-
-      {passage.questionPrompt && (
-        <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
-          <p className="text-xs font-bold text-blue-700 mb-1.5">📝 논술 문항</p>
-          <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{passage.questionPrompt}</p>
-        </div>
+      {passage.bodyHtml ? (
+        <div
+          className="passage-rich text-sm leading-relaxed text-gray-700"
+          dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(passage.bodyHtml) }}
+        />
+      ) : (
+        <>
+          {(passage.imageUrls || []).map((url, i) => (
+            <img key={i} src={url} alt="" className="w-full rounded-xl border border-gray-200 mb-4" />
+          ))}
+          <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+            {passage.bodyText}
+          </div>
+        </>
       )}
     </div>
   )
