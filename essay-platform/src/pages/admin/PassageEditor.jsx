@@ -1,9 +1,38 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ThemeProvider } from '@mui/material/styles'
+import TextField from '@mui/material/TextField'
 import { getPassage, createPassage, updatePassage } from '../../services/essay.js'
 import { importPassageDocx } from '../../services/docxImport.js'
+import { sanitizePassageHtml, htmlToText, isEmptyHtml } from '../../utils/sanitizeHtml.js'
+import { theme } from '../../theme.js'
+import { toYoutubeEmbedUrl } from '../../utils/youtube.js'
+import RichTextEditor from '../../components/richtext/RichTextEditor.jsx'
+import ToastProvider from '../../components/richtext/ToastProvider.jsx'
 
-const emptyForm = { title: '', bodyText: '', bodyHtml: '', imageUrls: [''], videoUrl: '', questionPrompt: '', wordLimitGuide: 800 }
+const emptyForm = { title: '', bodyHtml: '', videoUrl: '', questionPrompt: '', wordLimitGuide: 800 }
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
+ * 서식 도입 전(구형) 지문은 bodyHtml 없이 bodyText+imageUrls만 있다. 그대로 에디터를 열면
+ * 빈 문서로 보여 실수로 지워버릴 위험이 있으므로, 열 때 문단/이미지를 HTML로 변환해 채운다.
+ * 그대로 저장하면 자연스럽게 새 형식(bodyHtml)으로 넘어간다.
+ */
+function legacyToHtml(passage) {
+  const paragraphs = (passage.bodyText || '')
+    .split(/\n{2,}/)
+    .filter(Boolean)
+    .map(block => `<p>${escapeHtml(block).replace(/\n/g, '<br/>')}</p>`)
+    .join('')
+  const images = (passage.imageUrls || [])
+    .filter(Boolean)
+    .map(url => `<img src="${url}" alt="" />`)
+    .join('')
+  return paragraphs + images
+}
 
 export default function PassageEditor() {
   const navigate = useNavigate()
@@ -19,29 +48,15 @@ export default function PassageEditor() {
   useEffect(() => {
     if (!isEdit) return
     getPassage(passageId).then(p => {
-      if (p) setForm({ ...emptyForm, ...p, imageUrls: p.imageUrls?.length ? p.imageUrls : [''] })
+      if (p) {
+        setForm({ ...emptyForm, ...p, bodyHtml: p.bodyHtml || legacyToHtml(p) })
+      }
       setLoading(false)
     })
   }, [isEdit, passageId])
 
   function set(key, value) {
     setForm(prev => ({ ...prev, [key]: value }))
-  }
-
-  function setImageUrl(idx, value) {
-    setForm(prev => {
-      const next = [...prev.imageUrls]
-      next[idx] = value
-      return { ...prev, imageUrls: next }
-    })
-  }
-
-  function addImageUrl() {
-    setForm(prev => ({ ...prev, imageUrls: [...prev.imageUrls, ''] }))
-  }
-
-  function removeImageUrl(idx) {
-    setForm(prev => ({ ...prev, imageUrls: prev.imageUrls.filter((_, i) => i !== idx) }))
   }
 
   async function handleDocxImport(event) {
@@ -57,10 +72,9 @@ export default function PassageEditor() {
       setForm(prev => ({
         ...prev,
         title: imported.title || prev.title,
-        bodyText: imported.bodyText || prev.bodyText,
-        bodyHtml: imported.bodyHtml || ''
+        bodyHtml: imported.bodyHtml || prev.bodyHtml
       }))
-      setImportNotice('문서의 문단·서식·이미지를 불러왔습니다. 아래 미리보기에서 내용을 검토한 뒤 저장하세요.')
+      setImportNotice('문서의 문단·서식·이미지를 불러왔습니다. 에디터에서 내용을 검토한 뒤 저장하세요.')
     } catch (err) {
       console.error('DOCX 불러오기 실패:', err)
       setImportError(err.message || 'DOCX를 불러오지 못했습니다.')
@@ -70,7 +84,8 @@ export default function PassageEditor() {
   }
 
   async function handleSave() {
-    if (!form.title.trim() || !form.bodyText.trim()) {
+    const safeHtml = sanitizePassageHtml(form.bodyHtml)
+    if (!form.title.trim() || isEmptyHtml(safeHtml)) {
       alert('제목과 본문은 필수입니다.')
       return
     }
@@ -78,9 +93,9 @@ export default function PassageEditor() {
     try {
       const payload = {
         title: form.title.trim(),
-        bodyText: form.bodyText,
-        bodyHtml: form.bodyHtml || '',
-        imageUrls: form.imageUrls.map(u => u.trim()).filter(Boolean),
+        bodyHtml: safeHtml,
+        bodyText: htmlToText(safeHtml),
+        imageUrls: [],
         videoUrl: form.videoUrl.trim(),
         questionPrompt: form.questionPrompt,
         wordLimitGuide: Number(form.wordLimitGuide) || 800
@@ -109,6 +124,7 @@ export default function PassageEditor() {
 
   const inputClass = 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300'
   const labelClass = 'block text-xs font-bold text-gray-600 mb-1.5'
+  const embedUrl = toYoutubeEmbedUrl(form.videoUrl)
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -121,87 +137,100 @@ export default function PassageEditor() {
         <h1 className="text-base font-bold text-gray-900">{isEdit ? '지문 수정' : '새 지문 만들기'}</h1>
       </header>
 
-      <main className="flex-1 p-5 max-w-2xl mx-auto w-full space-y-5">
-        <section className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
-          <p className="text-sm font-bold text-indigo-950">DOCX 읽기자료 불러오기</p>
-          <p className="mt-1 text-xs leading-relaxed text-indigo-700">본문과 문서 안의 이미지를 가져옵니다. 이미지는 Firebase Storage에 저장되며, 영상은 아래 URL 입력란을 사용하세요.</p>
-          <label className="mt-3 inline-flex cursor-pointer items-center rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
-            <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="sr-only" onChange={handleDocxImport} disabled={importing} />
-            {importing ? 'DOCX 및 이미지 불러오는 중...' : 'DOCX 불러오기'}
-          </label>
-          {importNotice && <p className="mt-2 text-xs text-emerald-700">{importNotice}</p>}
-          {importError && <p className="mt-2 text-xs text-red-600">{importError}</p>}
-        </section>
+      <main className="flex-1 p-5 w-full">
+        <div className="max-w-6xl mx-auto space-y-5">
+          <section className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+            <p className="text-sm font-bold text-indigo-950">DOCX 읽기자료 불러오기</p>
+            <p className="mt-1 text-xs leading-relaxed text-indigo-700">문서의 제목·본문 서식·이미지를 그대로 불러와 아래 에디터에 채웁니다. 불러온 뒤에도 에디터에서 계속 다듬을 수 있어요.</p>
+            <label className="mt-3 inline-flex cursor-pointer items-center rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+              <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="sr-only" onChange={handleDocxImport} disabled={importing} />
+              {importing ? 'DOCX 및 이미지 불러오는 중...' : 'DOCX 불러오기'}
+            </label>
+            {importNotice && <p className="mt-2 text-xs text-emerald-700">{importNotice}</p>}
+            {importError && <p className="mt-2 text-xs text-red-600">{importError}</p>}
+          </section>
 
-        <div>
-          <label className={labelClass}>제목</label>
-          <input className={inputClass} value={form.title} onChange={e => set('title', e.target.value)} placeholder="예: 밀리컨의 기름방울 실험" />
-        </div>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 items-start">
+            {/* 좌측: 제목 + 본문 — ThemeProvider/ToastProvider는 DOM 요소를 만들지 않으므로
+                그 안의 두 div가 그리드에 따로따로 배치되지 않도록 실제 <div>로 한 번 더 감싼다. */}
+            <div>
+              <ThemeProvider theme={theme}>
+                <ToastProvider>
+                  <div>
+                    <label className={labelClass}>제목</label>
+                    <TextField
+                      fullWidth
+                      value={form.title}
+                      onChange={e => set('title', e.target.value)}
+                      placeholder="예: 밀리컨의 기름방울 실험"
+                    />
+                  </div>
 
-        {form.bodyHtml ? (
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <label className={labelClass}>본문 미리보기 (DOCX 서식 적용됨)</label>
-              <button
-                onClick={() => set('bodyHtml', '')}
-                className="text-xs text-gray-400 hover:text-red-500"
-              >
-                서식 제거하고 일반 텍스트로 전환
-              </button>
+                  <div className="mt-5">
+                    <label className={labelClass}>본문</label>
+                    <RichTextEditor
+                      value={form.bodyHtml}
+                      onChange={html => set('bodyHtml', html)}
+                      placeholder="학생에게 보여줄 읽기자료 본문을 작성하세요. 이미지는 붙여넣거나 끌어다 놓으면 됩니다. '/'를 치면 서식 메뉴가 뜹니다."
+                    />
+                  </div>
+                </ToastProvider>
+              </ThemeProvider>
             </div>
-            <div
-              className="passage-rich max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm"
-              dangerouslySetInnerHTML={{ __html: form.bodyHtml }}
-            />
-          </div>
-        ) : (
-          <div>
-            <label className={labelClass}>본문 (지문 텍스트)</label>
-            <textarea className={`${inputClass} resize-none`} rows={10} value={form.bodyText} onChange={e => set('bodyText', e.target.value)} placeholder="학생에게 보여줄 읽기자료 본문을 입력하세요." />
-          </div>
-        )}
 
-        <div>
-          <label className={labelClass}>이미지 URL (선택)</label>
-          <div className="space-y-2">
-            {form.imageUrls.map((url, idx) => (
-              <div key={idx} className="flex gap-2">
-                <input className={inputClass} value={url} onChange={e => setImageUrl(idx, e.target.value)} placeholder="https://..." />
-                {form.imageUrls.length > 1 && (
-                  <button onClick={() => removeImageUrl(idx)} className="text-gray-300 hover:text-red-500 px-2">✕</button>
+            {/* 우측: 영상, 논술 문항, 분량 가이드 */}
+            <div className="space-y-5">
+              <div>
+                <label className={labelClass}>영상 URL (선택, 유튜브 링크 권장)</label>
+                <input className={inputClass} value={form.videoUrl} onChange={e => set('videoUrl', e.target.value)} placeholder="https://youtube.com/watch?v=..." />
+                {form.videoUrl && (
+                  embedUrl ? (
+                    <div className="aspect-video rounded-xl overflow-hidden border border-gray-200 mt-2">
+                      <iframe
+                        src={embedUrl}
+                        className="w-full h-full"
+                        title="영상 미리보기"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    </div>
+                  ) : (
+                    <a
+                      href={form.videoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-block text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2"
+                    >
+                      🎬 링크 열어서 확인 →
+                    </a>
+                  )
                 )}
               </div>
-            ))}
+
+              <div>
+                <label className={labelClass}>논술 문항</label>
+                <textarea className={`${inputClass} resize-none`} rows={5} value={form.questionPrompt} onChange={e => set('questionPrompt', e.target.value)} placeholder="학생에게 제시할 논술 문항을 입력하세요." />
+              </div>
+
+              <div>
+                <label className={labelClass}>목표 분량 가이드 (자)</label>
+                <input type="number" className={`${inputClass} max-w-[140px]`} value={form.wordLimitGuide} onChange={e => set('wordLimitGuide', e.target.value)} />
+              </div>
+            </div>
           </div>
-          <button onClick={addImageUrl} className="text-xs text-indigo-600 hover:text-indigo-800 mt-2">+ 이미지 URL 추가</button>
-        </div>
 
-        <div>
-          <label className={labelClass}>영상 URL (선택, 유튜브 링크 권장)</label>
-          <input className={inputClass} value={form.videoUrl} onChange={e => set('videoUrl', e.target.value)} placeholder="https://youtube.com/watch?v=..." />
-        </div>
-
-        <div>
-          <label className={labelClass}>논술 문항</label>
-          <textarea className={`${inputClass} resize-none`} rows={3} value={form.questionPrompt} onChange={e => set('questionPrompt', e.target.value)} placeholder="학생에게 제시할 논술 문항을 입력하세요." />
-        </div>
-
-        <div>
-          <label className={labelClass}>목표 분량 가이드 (자)</label>
-          <input type="number" className={`${inputClass} max-w-[140px]`} value={form.wordLimitGuide} onChange={e => set('wordLimitGuide', e.target.value)} />
-        </div>
-
-        <div className="flex gap-2 pt-2">
-          <button onClick={() => navigate('/admin/passages')} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50">
-            취소
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
-          >
-            {saving ? '저장 중...' : '저장'}
-          </button>
+          <div className="flex gap-2 pt-2 max-w-sm">
+            <button onClick={() => navigate('/admin/passages')} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50">
+              취소
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
+            >
+              {saving ? '저장 중...' : '저장'}
+            </button>
+          </div>
         </div>
       </main>
     </div>

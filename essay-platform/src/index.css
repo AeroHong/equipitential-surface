@@ -45,3 +45,13 @@ html, body {
   font-weight: 700;
   color: #1f2937;
 }
+.passage-rich hr {
+  border: 0;
+  border-top: 1px solid #e5e7eb;
+  margin: 1.5em 0;
+}
+.passage-rich a {
+  color: #4f46e5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

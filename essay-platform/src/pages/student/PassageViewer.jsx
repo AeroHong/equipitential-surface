@@ -1,24 +1,6 @@
 import React from 'react'
 import { sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
-
-function toYoutubeEmbedUrl(url) {
-  if (!url) return null
-  try {
-    const u = new URL(url)
-    if (u.hostname.includes('youtu.be')) {
-      const id = u.pathname.slice(1)
-      return id ? `https://www.youtube.com/embed/${id}` : null
-    }
-    if (u.hostname.includes('youtube.com')) {
-      if (u.pathname.startsWith('/embed/')) return url
-      const id = u.searchParams.get('v')
-      return id ? `https://www.youtube.com/embed/${id}` : null
-    }
-  } catch {
-    return null
-  }
-  return null
-}
+import { toYoutubeEmbedUrl } from '../../utils/youtube.js'
 
 /**
  * 지문(텍스트+외부 이미지/영상 링크) 읽기 전용 패널. 작성 중에도 계속 스크롤해서 참고할 수 있다.

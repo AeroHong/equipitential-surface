@@ -1,6 +1,5 @@
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
-import { auth, storage } from '../firebase.js'
-import { sanitizePassageHtml } from '../utils/sanitizeHtml.js'
+import { uploadPassageImage } from './storage.js'
+import { sanitizePassageHtml, htmlToText } from '../utils/sanitizeHtml.js'
 
 const imageExtensions = {
   'image/jpeg': 'jpg',
@@ -14,25 +13,13 @@ function fileTitle(name) {
   return name.replace(/\.docx$/i, '').replace(/[_-]+/g, ' ').trim()
 }
 
-function htmlToText(html) {
-  const container = document.createElement('div')
-  container.innerHTML = html
-  return (container.innerText || container.textContent || '')
-    .replace(/ /g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
 async function uploadImage(dataUrl, index) {
   const response = await fetch(dataUrl)
   const blob = await response.blob()
   const extension = imageExtensions[blob.type] || 'bin'
-  const uid = auth.currentUser?.uid
-  if (!uid) throw new Error('로그인이 필요합니다.')
-
-  const objectRef = ref(storage, `essayPassages/${uid}/${Date.now()}-${index}.${extension}`)
-  await uploadBytes(objectRef, blob, { contentType: blob.type })
-  return getDownloadURL(objectRef)
+  const file = new File([blob], `image-${index}.${extension}`, { type: blob.type })
+  const uploaded = await uploadPassageImage(file)
+  return uploaded.url
 }
 
 /**
@@ -66,7 +53,7 @@ export async function importPassageDocx(file) {
   return {
     title: fileTitle(file.name),
     bodyHtml,
-    bodyText: htmlToText(result.value),
+    bodyText: htmlToText(bodyHtml),
     warnings: result.messages.map((message) => message.message)
   }
 }
