@@ -46,41 +46,59 @@ service cloud.firestore {
     }
 
     // ── 서술형 수행평가 작성 플랫폼 ──────────────────────────────
-    // isAdmin()이 아니라 isEssayAdmin()을 쓴다 — 'teacher' 권한(교사 요청→승인 시스템)은
-    // essay 관련 컬렉션에만 admin급 권한을 주고, physlab의 sessions/discussions/settings나
-    // users 컬렉션 자체의 관리자 권한(승인 행위 포함)은 여전히 super_admin 전용이다.
+    // 교사마다 독립적으로 일한다 — super_admin은 전체를 보고 관리할 수 있지만, teacher는
+    // 자기(createdBy/teacherUid)가 만든 지문·배정·그 배정에 달린 제출물만 쓸 수 있다.
+    // 읽기는 지문/배정 모두 인증된 사용자 전체에게 열어둔다 — 학생이 배정 링크로 들어와
+    // 지문을 읽어야 하는데, 그 학생이 "이 지문을 만든 교사의 학생"인지 미리 알 방법이
+    // 없기 때문(수행평가 링크 자체가 접근권을 증명한다).
 
-    // 지문: 인증된 사용자 읽기, essay admin(교사/super_admin)만 쓰기
+    // 지문
     match /essayPassages/{id} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && isEssayAdmin();
+      allow create: if request.auth != null && isEssayStaff() &&
+        request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.createdBy == request.auth.uid));
     }
 
-    // 배정: 인증된 사용자 읽기, essay admin만 쓰기
+    // 배정
     match /essayAssignments/{id} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && isEssayAdmin();
+      allow create: if request.auth != null && isEssayStaff() &&
+        request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.createdBy == request.auth.uid));
     }
 
-    // 제출물: 본인 또는 essay admin만 접근. 학생은 본인 uid 문서만, 그리고 status가
-    // 'submitted'로 잠기기 전까지만 수정 가능 — 제출 후 잠금을 클라이언트 UI뿐 아니라
-    // 규칙에서도 강제해, devtools로 직접 호출해도 우회할 수 없게 한다.
+    // 제출물: 본인(학생) 또는 그 배정을 만든 교사(teacherUid)·super_admin만 접근.
+    // 학생은 본인 uid 문서만, 그리고 status가 'submitted'로 잠기기 전까지만 수정 가능 —
+    // 제출 후 잠금을 클라이언트 UI뿐 아니라 규칙에서도 강제해, devtools로 직접 호출해도
+    // 우회할 수 없게 한다.
     match /essaySubmissions/{id} {
       // 학생의 첫 접속에서는 문서 존재 여부를 먼저 확인한다. 존재하지 않는 문서에
       // resource.data를 참조하면 규칙 평가 자체가 실패하므로, get에 한해서는 빈 문서
-      // 조회를 허용한다. 실제 존재하는 제출물의 get/list는 계속 본인 또는 admin만 가능하다.
+      // 조회를 허용한다. 실제 존재하는 제출물의 get은 본인 또는 그 교사/admin만 가능하다.
       allow get: if request.auth != null &&
         (!exists(/databases/$(database)/documents/essaySubmissions/$(id)) ||
-          resource.data.studentUid == request.auth.uid || isEssayAdmin());
-      allow list: if request.auth != null && isEssayAdmin();
+          resource.data.studentUid == request.auth.uid || isAdmin() ||
+          (isTeacher() && resource.data.teacherUid == request.auth.uid));
+      // list(목록 조회)는 문서 하나하나가 아니라 쿼리의 where절을 보고 판단하므로, teacher는
+      // 반드시 where('teacherUid','==',본인uid)를 포함한 쿼리로만 호출해야 한다
+      // (services/essay.js의 subscribeSubmissions가 그렇게 만든다).
+      allow list: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
       allow create: if request.auth != null && request.resource.data.studentUid == request.auth.uid;
       allow update: if request.auth != null &&
-        ((resource.data.studentUid == request.auth.uid && resource.data.status != 'submitted') || isEssayAdmin());
+        ((resource.data.studentUid == request.auth.uid && resource.data.status != 'submitted') ||
+          isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
 
-      // 작성 로그(input/keydown/paste) 서브컬렉션: 본인 또는 essay admin, 제출 잠금 전까지만 작성 가능
+      // 작성 로그(input/keydown/paste) 서브컬렉션: 본인 또는 그 교사/admin, 제출 잠금
+      // 전까지만 작성 가능
       match /{sub=**} {
         allow read: if request.auth != null &&
-          (get(/databases/$(database)/documents/essaySubmissions/$(id)).data.studentUid == request.auth.uid || isEssayAdmin());
+          (get(/databases/$(database)/documents/essaySubmissions/$(id)).data.studentUid == request.auth.uid ||
+            isAdmin() ||
+            (isTeacher() && get(/databases/$(database)/documents/essaySubmissions/$(id)).data.teacherUid == request.auth.uid));
         allow write: if request.auth != null && ownsOpenSubmission(id);
       }
     }
@@ -89,9 +107,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
     }
 
-    function isEssayAdmin() {
-      let role = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-      return role == 'super_admin' || role == 'teacher';
+    function isTeacher() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    function isEssayStaff() {
+      return isAdmin() || isTeacher();
     }
 
     function ownsOpenSubmission(id) {

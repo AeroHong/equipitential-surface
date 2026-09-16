@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useAuth } from '../../App.jsx'
 import { listPassages, getAssignment, createAssignment, updateAssignment } from '../../services/essay.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
 
 export default function AssignmentEditor() {
   const navigate = useNavigate()
+  const { user, userRole } = useAuth()
   const { assignmentId } = useParams()
   const isEdit = Boolean(assignmentId)
   const [passages, setPassages] = useState([])
@@ -15,6 +17,7 @@ export default function AssignmentEditor() {
   const [status, setStatus] = useState('open')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(isEdit)
+  const [accessDenied, setAccessDenied] = useState(false)
 
   // 저장 완료 후 상태
   const [savedAssignment, setSavedAssignment] = useState(null)
@@ -29,10 +32,18 @@ export default function AssignmentEditor() {
   useEffect(() => {
     async function load() {
       try {
+        const teacherUid = userRole === 'teacher' ? user.uid : undefined
         const [list, assignment] = await Promise.all([
-          listPassages(),
+          listPassages(teacherUid),
           isEdit ? getAssignment(assignmentId) : Promise.resolve(null)
         ])
+        // teacher는 본인이 만든 배정만 수정할 수 있다 — URL을 직접 알아도 남의 배정은
+        // 열리지 않게 화면에서도 막는다(저장 시도 시 firestore.rules가 어차피 막지만,
+        // 편집 가능한 것처럼 보이다 저장에서만 실패하는 건 혼란스럽다).
+        if (assignment && userRole === 'teacher' && assignment.createdBy !== user.uid) {
+          setAccessDenied(true)
+          return
+        }
         const available = isEdit ? list : list.filter(p => p.active)
         setPassages(available)
         if (assignment) {
@@ -50,7 +61,7 @@ export default function AssignmentEditor() {
       }
     }
     load()
-  }, [assignmentId, isEdit])
+  }, [assignmentId, isEdit, user, userRole])
 
   async function handleSave() {
     if (!passageId) { alert('지문을 선택해주세요.'); return }
@@ -135,6 +146,17 @@ export default function AssignmentEditor() {
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" /></div>
+  }
+
+  if (accessDenied) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+        <div className="text-center">
+          <p className="text-gray-500 mb-4">다른 교사가 만든 배정이라 수정할 수 없습니다.</p>
+          <button onClick={() => navigate('/admin')} className="text-indigo-600 text-sm underline">돌아가기</button>
+        </div>
+      </div>
+    )
   }
 
   return (

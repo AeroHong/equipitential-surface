@@ -13,12 +13,16 @@ import {
   serverTimestamp,
   increment
 } from 'firebase/firestore'
-import { db } from '../firebase.js'
+import { auth, db } from '../firebase.js'
 
 // ─── 지문(essayPassages) CRUD ──────────────────────────────────
+//
+// 교사별로 독립적으로 관리한다 — createdBy로 만든 사람을 표시하고, list 계열 함수는
+// teacherUid를 주면 본인 것만, 안 주면 전체(super_admin 전용, firestore.rules가 강제)를
+// 돌려준다.
 
 /**
- * 지문 생성
+ * 지문 생성 (createdBy는 현재 로그인 계정)
  * @param {object} data {title, bodyText, imageUrls, videoUrl, questionPrompt, wordLimitGuide}
  * @returns {Promise<string>} passageId
  */
@@ -32,6 +36,7 @@ export async function createPassage(data) {
     questionPrompt: data.questionPrompt || '',
     wordLimitGuide: data.wordLimitGuide || 800,
     active: true,
+    createdBy: auth.currentUser?.uid || '',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   })
@@ -63,10 +68,14 @@ export async function getPassage(passageId) {
 
 /**
  * 지문 목록 조회 (최신순, 클라이언트 정렬)
+ * @param {string} [teacherUid] 주면 그 교사가 만든 것만(교사용), 안 주면 전체(super_admin용)
  * @returns {Promise<Array>}
  */
-export async function listPassages() {
-  const snap = await getDocs(collection(db, 'essayPassages'))
+export async function listPassages(teacherUid) {
+  const q = teacherUid
+    ? query(collection(db, 'essayPassages'), where('createdBy', '==', teacherUid))
+    : collection(db, 'essayPassages')
+  const snap = await getDocs(q)
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => {
@@ -79,7 +88,7 @@ export async function listPassages() {
 // ─── 배정(essayAssignments) CRUD ───────────────────────────────
 
 /**
- * 배정 생성
+ * 배정 생성 (createdBy는 현재 로그인 계정 — 이 배정으로 생기는 제출물도 같은 teacherUid를 갖는다)
  * @param {object} data {passageId, title, dueAt, wordLimit}
  * @returns {Promise<string>} assignmentId
  */
@@ -91,6 +100,7 @@ export async function createAssignment(data) {
     wordLimit: data.wordLimit || null,
     status: 'open',
     classroom: null,
+    createdBy: auth.currentUser?.uid || '',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   })
@@ -122,10 +132,14 @@ export async function getAssignment(assignmentId) {
 
 /**
  * 배정 목록 조회 (최신순)
+ * @param {string} [teacherUid] 주면 그 교사가 만든 것만(교사용), 안 주면 전체(super_admin용)
  * @returns {Promise<Array>}
  */
-export async function listAssignments() {
-  const snap = await getDocs(collection(db, 'essayAssignments'))
+export async function listAssignments(teacherUid) {
+  const q = teacherUid
+    ? query(collection(db, 'essayAssignments'), where('createdBy', '==', teacherUid))
+    : collection(db, 'essayAssignments')
+  const snap = await getDocs(q)
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => {
@@ -145,9 +159,11 @@ function submissionId(assignmentId, uid) {
  * 제출물 문서를 없으면 생성하고(upsert), 항상 최신 데이터를 반환
  * @param {string} assignmentId
  * @param {{uid: string, name: string, class: string}} student
+ * @param {string} teacherUid 이 배정을 만든 교사 uid(essayAssignments.createdBy) — 제출물에도
+ *   그대로 찍어둬야 그 교사의 대시보드 list 쿼리가 firestore.rules를 통과한다.
  * @returns {Promise<object>}
  */
-export async function getOrCreateSubmission(assignmentId, student) {
+export async function getOrCreateSubmission(assignmentId, student, teacherUid) {
   const id = submissionId(assignmentId, student.uid)
   const ref = doc(db, 'essaySubmissions', id)
   const snap = await getDoc(ref)
@@ -155,6 +171,7 @@ export async function getOrCreateSubmission(assignmentId, student) {
 
   const initial = {
     assignmentId,
+    teacherUid: teacherUid || '',
     studentUid: student.uid,
     studentName: student.name || '',
     studentClass: student.class || '',
@@ -222,18 +239,23 @@ export async function reopenSubmission(subId) {
  * 배정별 제출물 실시간 구독 (교사 대시보드용)
  * @param {string} assignmentId
  * @param {function} callback
+ * @param {string} [teacherUid] super_admin이 아닌 teacher가 부를 땐 반드시 넘겨야 한다 —
+ *   firestore.rules의 list 규칙이 "teacherUid == 내 uid"를 증명 가능한 쿼리로 요구한다
+ *   (규칙이 문서 하나하나가 아니라 쿼리 자체의 where절을 보고 통과 여부를 정하기 때문).
  * @returns {function} unsubscribe
  */
-export function subscribeSubmissions(assignmentId, callback) {
-  const q = query(
-    collection(db, 'essaySubmissions'),
-    where('assignmentId', '==', assignmentId)
-  )
+export function subscribeSubmissions(assignmentId, callback, teacherUid) {
+  const clauses = [where('assignmentId', '==', assignmentId)]
+  if (teacherUid) clauses.push(where('teacherUid', '==', teacherUid))
+  const q = query(collection(db, 'essaySubmissions'), ...clauses)
   return onSnapshot(q, (snap) => {
     const items = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.studentName || '').localeCompare(b.studentName || '', 'ko'))
     callback(items)
+  }, (err) => {
+    console.error('제출물 구독 실패:', err)
+    callback([])
   })
 }
 

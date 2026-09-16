@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../App.jsx'
 import { listPassages, updatePassage } from '../../services/essay.js'
 
 export default function PassageList() {
   const navigate = useNavigate()
+  const { user, userRole } = useAuth()
   const [passages, setPassages] = useState([])
   const [loading, setLoading] = useState(true)
 
+  // super_admin은 전체, teacher는 본인이 만든 지문만 — firestore.rules와 짝을 이룬다.
   function reload() {
     setLoading(true)
-    listPassages().then(data => { setPassages(data); setLoading(false) })
+    listPassages(userRole === 'teacher' ? user.uid : undefined).then(data => { setPassages(data); setLoading(false) })
   }
 
   useEffect(() => { reload() }, [])

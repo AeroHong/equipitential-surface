@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useAuth } from '../../App.jsx'
 import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment } from '../../services/essay.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
@@ -17,10 +18,12 @@ function formatTime(ts) {
 export default function AssignmentDashboard() {
   const { assignmentId } = useParams()
   const navigate = useNavigate()
+  const { user, userRole } = useAuth()
   const [assignment, setAssignment] = useState(null)
   const [passage, setPassage] = useState(null)
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [accessDenied, setAccessDenied] = useState(false)
   const [copied, setCopied] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [courses, setCourses] = useState(null)
@@ -29,13 +32,23 @@ export default function AssignmentDashboard() {
   const [classroomError, setClassroomError] = useState('')
 
   useEffect(() => {
+    let unsub = () => {}
     getAssignment(assignmentId).then(async a => {
+      // teacher는 본인이 만든 배정의 대시보드만 볼 수 있다 — URL을 직접 알아도 남의
+      // 제출 현황은 안 보이게 막는다(firestore.rules의 list 규칙도 어차피 막지만,
+      // 빈 화면으로만 보이면 왜 안 보이는지 알기 어렵다).
+      if (a && userRole === 'teacher' && a.createdBy !== user.uid) {
+        setAccessDenied(true)
+        setLoading(false)
+        return
+      }
       setAssignment(a)
       if (a) setPassage(await getPassage(a.passageId))
+      const teacherUid = userRole === 'teacher' ? user.uid : undefined
+      unsub = subscribeSubmissions(assignmentId, data => { setSubmissions(data); setLoading(false) }, teacherUid)
     })
-    const unsub = subscribeSubmissions(assignmentId, data => { setSubmissions(data); setLoading(false) })
-    return unsub
-  }, [assignmentId])
+    return () => unsub()
+  }, [assignmentId, user, userRole])
 
   async function handleReopen(sub) {
     if (!window.confirm(`${sub.studentName} 학생의 제출을 다시 열까요? 학생이 재수정할 수 있게 됩니다.`)) return
@@ -110,6 +123,17 @@ export default function AssignmentDashboard() {
 
   const wordLimit = assignment?.wordLimit || passage?.wordLimitGuide || 800
   const submittedCount = submissions.filter(s => s.status === 'submitted').length
+
+  if (accessDenied) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+        <div className="text-center">
+          <p className="text-gray-500 mb-4">다른 교사가 만든 배정이라 볼 수 없습니다.</p>
+          <button onClick={() => navigate('/admin')} className="text-indigo-600 text-sm underline">돌아가기</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">

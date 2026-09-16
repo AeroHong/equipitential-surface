@@ -50,7 +50,7 @@ export default function EssayWritePage() {
             uid: user.uid,
             name: userInfo?.name || user.displayName || '',
             class: userInfo?.class || ''
-          })
+          }, a.createdBy)
         } catch (err) {
           throw new Error(`내 작성 공간 생성 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
         }

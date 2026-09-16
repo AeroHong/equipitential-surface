@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ThemeProvider } from '@mui/material/styles'
 import TextField from '@mui/material/TextField'
+import { useAuth } from '../../App.jsx'
 import { getPassage, createPassage, updatePassage } from '../../services/essay.js'
 import { importPassageDocx } from '../../services/docxImport.js'
 import { sanitizePassageHtml, htmlToText, isEmptyHtml } from '../../utils/sanitizeHtml.js'
@@ -36,6 +37,7 @@ function legacyToHtml(passage) {
 
 export default function PassageEditor() {
   const navigate = useNavigate()
+  const { user, userRole } = useAuth()
   const { passageId } = useParams()
   const isEdit = Boolean(passageId)
   const [form, setForm] = useState(emptyForm)
@@ -44,16 +46,24 @@ export default function PassageEditor() {
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState('')
   const [importNotice, setImportNotice] = useState('')
+  const [accessDenied, setAccessDenied] = useState(false)
 
   useEffect(() => {
     if (!isEdit) return
     getPassage(passageId).then(p => {
+      // teacher는 본인이 만든 지문만 수정할 수 있다 — URL을 직접 알아도 남의 지문은
+      // 열리지 않게 화면에서도 막는다(저장 자체는 firestore.rules가 어차피 막는다).
+      if (p && userRole === 'teacher' && p.createdBy !== user.uid) {
+        setAccessDenied(true)
+        setLoading(false)
+        return
+      }
       if (p) {
         setForm({ ...emptyForm, ...p, bodyHtml: p.bodyHtml || legacyToHtml(p) })
       }
       setLoading(false)
     })
-  }, [isEdit, passageId])
+  }, [isEdit, passageId, user, userRole])
 
   function set(key, value) {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -118,6 +128,17 @@ export default function PassageEditor() {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (accessDenied) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
+        <div className="text-center">
+          <p className="text-gray-500 mb-4">다른 교사가 만든 지문이라 수정할 수 없습니다.</p>
+          <button onClick={() => navigate('/admin/passages')} className="text-indigo-600 text-sm underline">돌아가기</button>
+        </div>
       </div>
     )
   }

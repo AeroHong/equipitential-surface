@@ -19,8 +19,9 @@ export default function EssayAdminHome() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    listAssignments().then(data => { setAssignments(data); setLoading(false) })
-  }, [])
+    // super_admin은 전체, teacher는 본인이 만든 배정만 — firestore.rules와 짝을 이룬다.
+    listAssignments(userRole === 'teacher' ? user.uid : undefined).then(data => { setAssignments(data); setLoading(false) })
+  }, [user, userRole])
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">

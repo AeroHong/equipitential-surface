@@ -9,14 +9,21 @@ export default function ReplayView() {
   const [submission, setSubmission] = useState(null)
   const [logs, setLogs] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     const subId = `${assignmentId}__${uid}`
-    Promise.all([getSubmission(subId), getReplayLogs(subId)]).then(([sub, replayLogs]) => {
-      setSubmission(sub)
-      setLogs(replayLogs)
-      setLoading(false)
-    })
+    Promise.all([getSubmission(subId), getReplayLogs(subId)])
+      .then(([sub, replayLogs]) => {
+        setSubmission(sub)
+        setLogs(replayLogs)
+      })
+      .catch(err => {
+        // 다른 교사가 만든 배정의 제출물이면 firestore.rules가 여기서 막는다(권한 거부).
+        console.error('제출물 조회 실패:', err)
+        setError('이 제출물을 볼 권한이 없습니다.')
+      })
+      .finally(() => setLoading(false))
   }, [assignmentId, uid])
 
   return (
@@ -38,6 +45,8 @@ export default function ReplayView() {
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : error ? (
+          <div className="text-center py-16 text-gray-400">{error}</div>
         ) : !submission ? (
           <div className="text-center py-16 text-gray-400">제출물을 찾을 수 없습니다.</div>
         ) : (
