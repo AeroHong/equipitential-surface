@@ -18,7 +18,6 @@ function Step2Redirect() {
 }
 import Dashboard from './pages/admin/Dashboard.jsx'
 import StudentView from './pages/admin/StudentView.jsx'
-import SetupAdmin from './pages/SetupAdmin.jsx'
 
 // ─── Auth Context ────────────────────────────────────────────
 export const AuthContext = createContext(null)
@@ -214,9 +213,6 @@ export default function App() {
               </RequireAdmin>
             }
           />
-
-          {/* 일회성 어드민 설정 — 배포 전 제거 */}
-          <Route path="/setup-admin" element={<RequireAuth><SetupAdmin /></RequireAuth>} />
 
           {/* 알 수 없는 경로 */}
           <Route path="*" element={<Navigate to="/" replace />} />

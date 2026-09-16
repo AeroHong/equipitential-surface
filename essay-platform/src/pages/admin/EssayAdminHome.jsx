@@ -14,7 +14,7 @@ function formatDate(ts) {
 
 export default function EssayAdminHome() {
   const navigate = useNavigate()
-  const { user, userInfo } = useAuth()
+  const { user, userInfo, userRole } = useAuth()
   const [assignments, setAssignments] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -31,10 +31,18 @@ export default function EssayAdminHome() {
           </div>
           <div>
             <h1 className="text-base font-bold text-gray-900">서술형 수행평가 관리</h1>
-            <p className="text-xs text-gray-500">Super Admin</p>
+            <p className="text-xs text-gray-500">{userRole === 'super_admin' ? 'Super Admin' : '교사'}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {userRole === 'super_admin' && (
+            <button
+              onClick={() => navigate('/admin/teachers')}
+              className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded-lg px-3 py-1.5 hover:bg-purple-50 font-medium transition-colors"
+            >
+              🔑 교사 권한 관리
+            </button>
+          )}
           <button
             onClick={() => navigate('/admin/passages')}
             className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-3 py-1.5 hover:bg-indigo-50 font-medium transition-colors"

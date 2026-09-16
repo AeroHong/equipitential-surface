@@ -3,9 +3,27 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // 사용자 문서
+    //
+    // 예전엔 본인 uid 문서를 통째로 자유롭게 쓸 수 있어서, 로그인한 사람이 devtools로
+    // Firestore를 직접 호출해 자기 role을 'super_admin'으로 바꿔버릴 수 있었다
+    // (physlab의 /setup-admin 페이지가 딱 이 구멍을 UI로 노출해둔 것이었다 — 페이지를
+    // 지워도 규칙이 이렇게 열려 있으면 근본적으로 막히지 않는다). 이제 role 필드는
+    // (1) 관리자(super_admin)만 자유롭게 바꿀 수 있고, (2) 본인은 'student' →
+    // 'teacher_pending'(교사 권한 요청) 전이 하나만 스스로 할 수 있다.
     match /users/{uid} {
       allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
-      allow write: if request.auth != null && (request.auth.uid == uid || isAdmin());
+
+      allow create, update, delete: if request.auth != null && isAdmin();
+
+      // 로그인 시 최초 문서 생성 — role은 반드시 'student'로 시작해야 한다.
+      allow create: if request.auth != null && request.auth.uid == uid &&
+        request.resource.data.role == 'student';
+
+      // 본인 문서 수정 — role은 그대로 두거나(이름/학급 등 다른 필드 수정),
+      // 'student' → 'teacher_pending' 요청만 허용한다.
+      allow update: if request.auth != null && request.auth.uid == uid &&
+        (request.resource.data.role == resource.data.role ||
+          (resource.data.role == 'student' && request.resource.data.role == 'teacher_pending'));
     }
 
     // 세션 문서
@@ -28,20 +46,23 @@ service cloud.firestore {
     }
 
     // ── 서술형 수행평가 작성 플랫폼 ──────────────────────────────
+    // isAdmin()이 아니라 isEssayAdmin()을 쓴다 — 'teacher' 권한(교사 요청→승인 시스템)은
+    // essay 관련 컬렉션에만 admin급 권한을 주고, physlab의 sessions/discussions/settings나
+    // users 컬렉션 자체의 관리자 권한(승인 행위 포함)은 여전히 super_admin 전용이다.
 
-    // 지문: 인증된 사용자 읽기, admin만 쓰기
+    // 지문: 인증된 사용자 읽기, essay admin(교사/super_admin)만 쓰기
     match /essayPassages/{id} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && isAdmin();
+      allow write: if request.auth != null && isEssayAdmin();
     }
 
-    // 배정: 인증된 사용자 읽기, admin만 쓰기
+    // 배정: 인증된 사용자 읽기, essay admin만 쓰기
     match /essayAssignments/{id} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && isAdmin();
+      allow write: if request.auth != null && isEssayAdmin();
     }
 
-    // 제출물: 본인 또는 admin만 접근. 학생은 본인 uid 문서만, 그리고 status가
+    // 제출물: 본인 또는 essay admin만 접근. 학생은 본인 uid 문서만, 그리고 status가
     // 'submitted'로 잠기기 전까지만 수정 가능 — 제출 후 잠금을 클라이언트 UI뿐 아니라
     // 규칙에서도 강제해, devtools로 직접 호출해도 우회할 수 없게 한다.
     match /essaySubmissions/{id} {
@@ -50,22 +71,27 @@ service cloud.firestore {
       // 조회를 허용한다. 실제 존재하는 제출물의 get/list는 계속 본인 또는 admin만 가능하다.
       allow get: if request.auth != null &&
         (!exists(/databases/$(database)/documents/essaySubmissions/$(id)) ||
-          resource.data.studentUid == request.auth.uid || isAdmin());
-      allow list: if request.auth != null && isAdmin();
+          resource.data.studentUid == request.auth.uid || isEssayAdmin());
+      allow list: if request.auth != null && isEssayAdmin();
       allow create: if request.auth != null && request.resource.data.studentUid == request.auth.uid;
       allow update: if request.auth != null &&
-        ((resource.data.studentUid == request.auth.uid && resource.data.status != 'submitted') || isAdmin());
+        ((resource.data.studentUid == request.auth.uid && resource.data.status != 'submitted') || isEssayAdmin());
 
-      // 작성 로그(input/keydown/paste) 서브컬렉션: 본인 또는 admin, 제출 잠금 전까지만 작성 가능
+      // 작성 로그(input/keydown/paste) 서브컬렉션: 본인 또는 essay admin, 제출 잠금 전까지만 작성 가능
       match /{sub=**} {
         allow read: if request.auth != null &&
-          (get(/databases/$(database)/documents/essaySubmissions/$(id)).data.studentUid == request.auth.uid || isAdmin());
+          (get(/databases/$(database)/documents/essaySubmissions/$(id)).data.studentUid == request.auth.uid || isEssayAdmin());
         allow write: if request.auth != null && ownsOpenSubmission(id);
       }
     }
 
     function isAdmin() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+
+    function isEssayAdmin() {
+      let role = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      return role == 'super_admin' || role == 'teacher';
     }
 
     function ownsOpenSubmission(id) {
