@@ -5,7 +5,7 @@ import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, upda
 import { getTemplate } from '../../services/reportTemplates.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
-import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
+import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage, getCourseStudentCount, isClassroomConnected } from '../../services/classroom.js'
 
 function formatTime(ts) {
   if (!ts) return '—'
@@ -33,6 +33,8 @@ export default function AssignmentDashboard() {
   const [selectedCourseId, setSelectedCourseId] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [classroomError, setClassroomError] = useState('')
+  const [classroomStudentCount, setClassroomStudentCount] = useState(null)
+  const [fetchingStudentCount, setFetchingStudentCount] = useState(false)
 
   useEffect(() => {
     let unsub = () => {}
@@ -46,6 +48,9 @@ export default function AssignmentDashboard() {
         return
       }
       setAssignment(a)
+      // 마지막으로 확인했던 학생 수를 배정 문서에 저장해두고, 다음 접속(토큰이 없는 새
+      // 세션)에서도 바로 보여준다 — "새로고침" 버튼은 그 저장값을 최신으로 다시 갱신한다.
+      if (a?.classroom?.studentCount != null) setClassroomStudentCount(a.classroom.studentCount)
       if (a?.passageId) setPassage(await getPassage(a.passageId))
       if (a?.responseType === 'structured' && a.templateId) setTemplate(await getTemplate(a.templateId))
       unsub = subscribeSubmissions(assignmentId, data => { setSubmissions(data); setLoading(false) }, user.uid)
@@ -89,6 +94,29 @@ export default function AssignmentDashboard() {
       setClassroomError(getClassroomErrorMessage(err))
     } finally {
       setConnecting(false)
+    }
+  }
+
+  // 클래스룸 학생 수는 토큰이 있어야 조회되는데, 토큰은 페이지를 새로 열 때마다 초기화된다
+  // (services/classroom.js는 모듈 메모리에만 토큰을 들고 있음, 새로고침 시 사라짐). 이미
+  // 연결돼 있으면 그대로 조회하고, 아니면 조용히(팝업 없이) 먼저 연결부터 시도한다.
+  async function handleFetchStudentCount() {
+    if (!assignment?.classroom?.courseId) return
+    setClassroomError('')
+    setFetchingStudentCount(true)
+    try {
+      if (!isClassroomConnected()) await signInToClassroom()
+      const count = await getCourseStudentCount(assignment.classroom.courseId)
+      setClassroomStudentCount(count)
+      const studentCountUpdatedAt = new Date()
+      const nextClassroom = { ...assignment.classroom, studentCount: count, studentCountUpdatedAt }
+      await updateAssignment(assignmentId, { classroom: nextClassroom })
+      setAssignment(a => ({ ...a, classroom: nextClassroom }))
+    } catch (err) {
+      console.error('클래스룸 학생 수 조회 실패:', err)
+      setClassroomError(getClassroomErrorMessage(err, '학생 수 조회'))
+    } finally {
+      setFetchingStudentCount(false)
     }
   }
 
@@ -225,7 +253,30 @@ export default function AssignmentDashboard() {
                   <a href={assignment.classroom.alternateLink} target="_blank" rel="noreferrer" className="text-xs font-medium text-emerald-700 hover:underline">게시된 과제 열기</a>
                 )}
               </div>
-              {assignment.classroom?.courseName && <p className="mb-3 text-xs text-emerald-700">현재 게시 수업: {assignment.classroom.courseName}</p>}
+              {assignment.classroom?.courseName && <p className="mb-1 text-xs text-emerald-700">현재 게시 수업: {assignment.classroom.courseName}</p>}
+              {assignment.classroom?.courseId && (
+                <div className="mb-3 flex items-center gap-2">
+                  {classroomStudentCount === null ? (
+                    <button
+                      onClick={handleFetchStudentCount}
+                      disabled={fetchingStudentCount}
+                      className="text-xs text-emerald-700 underline underline-offset-2 hover:text-emerald-800 disabled:opacity-40"
+                    >
+                      {fetchingStudentCount ? '학생 수 확인 중...' : '클래스룸 학생 수 확인'}
+                    </button>
+                  ) : (
+                    <p className="text-xs text-gray-600">
+                      클래스룸 학생 <span className="font-bold text-gray-800">{classroomStudentCount}명</span> · 제출완료 <span className="font-bold text-gray-800">{submittedCount}명</span>
+                      <button onClick={handleFetchStudentCount} disabled={fetchingStudentCount} className="ml-2 text-gray-400 hover:text-gray-600 disabled:opacity-40">
+                        {fetchingStudentCount ? '확인 중...' : '↻'}
+                      </button>
+                      {assignment.classroom?.studentCountUpdatedAt && (
+                        <span className="ml-1 text-gray-400">({formatTime(assignment.classroom.studentCountUpdatedAt)} 확인)</span>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
               {!hasClassroomConfig() ? (
                 <p className="text-xs text-gray-400">Classroom 설정이 필요합니다.</p>
               ) : !courses ? (

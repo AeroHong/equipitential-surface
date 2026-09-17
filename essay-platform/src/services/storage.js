@@ -42,3 +42,23 @@ export async function uploadPassageImage(file) {
 
   return { name: file.name, size: file.size, path, url: await getDownloadURL(objectRef) }
 }
+
+/**
+ * 학생 답안(EssayEditor)에 끼워 넣는 이미지 한 개를 업로드한다. 경로가 본인 uid로
+ * 시작해야 storage.rules(essayAnswers/{uid}/**)를 통과한다.
+ * @param {File} file
+ * @returns {Promise<{name, size, path, url}>}
+ */
+export async function uploadAnswerImage(file) {
+  if (file.size > MAX_IMAGE_BYTES) {
+    throw new Error(`파일이 너무 큽니다. ${formatBytes(MAX_IMAGE_BYTES)}까지 올릴 수 있습니다.`)
+  }
+  const uid = auth.currentUser?.uid
+  if (!uid) throw new Error('로그인이 필요합니다.')
+
+  const path = `essayAnswers/${uid}/${Date.now()}_${safeFileName(file.name)}`
+  const objectRef = ref(storage, path)
+  await uploadBytes(objectRef, file, { contentType: file.type || 'application/octet-stream' })
+
+  return { name: file.name, size: file.size, path, url: await getDownloadURL(objectRef) }
+}

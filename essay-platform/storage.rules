@@ -15,5 +15,16 @@ service firebase.storage {
       allow read: if request.auth != null;
       allow write: if isAdmin();
     }
+
+    // 학생 답안에 끼워 넣는 이미지 — 지문과 달리 "작성자 = 그 학생 본인"이라 교사 승인
+    // 없이도 본인 경로에만 쓸 수 있게 한다. 경로의 uid가 본인 것인지, 이미지 파일인지,
+    // 20MB(services/storage.js의 MAX_IMAGE_BYTES)를 넘지 않는지를 규칙에서도 강제해서
+    // 클라이언트 쪽 체크를 devtools로 우회해도 서버 쪽에서 막히게 한다.
+    match /essayAnswers/{uid}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid &&
+        request.resource.size < 20 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+    }
   }
 }

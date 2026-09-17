@@ -7,7 +7,10 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 const DISCOVERY_DOC = 'https://classroom.googleapis.com/$discovery/rest?version=v1'
 const SCOPES = [
   'https://www.googleapis.com/auth/classroom.courses.readonly',
-  'https://www.googleapis.com/auth/classroom.coursework.students'
+  'https://www.googleapis.com/auth/classroom.coursework.students',
+  // 수업 학생 수 조회(courses.students.list, getCourseStudentCount)에 필요 — 명단 자체는
+  // 안 쓰고 개수만 쓰지만, Classroom API는 로스터 조회에 이 스코프를 요구한다.
+  'https://www.googleapis.com/auth/classroom.rosters.readonly'
 ].join(' ')
 
 let accessToken = null
@@ -128,6 +131,27 @@ export async function listMyCourses() {
     courseStates: ['ACTIVE']
   })
   return res.result.courses || []
+}
+
+/**
+ * 수업에 등록된 학생 수. 목록 API가 최대 페이지 크기 제한이 있어 nextPageToken을 따라
+ * 끝까지 순회한다(학생 명단 자체는 필요 없고 개수만 필요하므로 페이지별 길이만 합산).
+ * @param {string} courseId
+ * @returns {Promise<number>}
+ */
+export async function getCourseStudentCount(courseId) {
+  let count = 0
+  let pageToken = ''
+  do {
+    const res = await window.gapi.client.classroom.courses.students.list({
+      courseId,
+      pageSize: 100,
+      pageToken: pageToken || undefined
+    })
+    count += (res.result.students || []).length
+    pageToken = res.result.nextPageToken || ''
+  } while (pageToken)
+  return count
 }
 
 /**
