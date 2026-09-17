@@ -76,20 +76,32 @@ export default function EssayEditor({
   const [hoveredBlock, setHoveredBlock] = useState(null) // { el, rect }
   const [blockDrag, setBlockDrag] = useState(null) // { insertBeforeEl, indicatorTop }
 
+  // value(저장용 — 수식이 평문 라벨로 접힌 HTML)와 el.innerHTML(화면용 — 수식이 KaTeX로
+  // 렌더링된 상태)은 수식이 하나라도 있으면 원래 서로 다르다. "지금 value가 라이브 DOM을
+  // 그대로 접은 것과 같은지"를 먼저 확인해서, 같으면(내가 방금 타이핑해서 생긴 echo) 화면을
+  // 그대로 두고, 다르면(섹션 전환·최초 로드 등 진짜 외부 변경) 그때만 다시 그린다. 매번
+  // 무조건 다시 그리면 타이핑할 때마다 수식이 평문으로 굳어버린 채 안 돌아오는 문제가
+  // 생긴다(엔터/스페이스 등 여러 계기로 반복 발견됨) — commit()이 라이브 DOM은 건드리지
+  // 않고 별도 복제본에서만 저장용 문자열을 만들기 때문에, 화면은 항상 최신 렌더링을 유지한다.
+  function toStorageHtml(el) {
+    const clone = el.cloneNode(true)
+    prepareMathForStorage(clone)
+    return sanitizeAnswerHtml(clone.innerHTML)
+  }
+
   useEffect(() => {
     const el = editorRef.current
-    if (el && value !== el.innerHTML) el.innerHTML = value || ''
-    if (el) renderMathInElement(el)
+    if (!el) return
+    if (toStorageHtml(el) !== (value || '')) {
+      el.innerHTML = value || ''
+      renderMathInElement(el)
+    }
   }, [value])
 
   function commit(inputType) {
     const el = editorRef.current
     if (!el) return
-    // KaTeX의 화면용 내부 DOM은 저장하지 않는다. data-math와 읽기용 짧은 평문만 남겨
-    // 자동저장 스냅샷과 리플레이가 작고 안정적인 HTML을 갖게 한다.
-    prepareMathForStorage(el)
-    const html = sanitizeAnswerHtml(el.innerHTML)
-    if (html !== el.innerHTML) el.innerHTML = html
+    const html = toStorageHtml(el)
     onChange(html)
     onLogInput?.({
       value: html,
@@ -174,20 +186,50 @@ export default function EssayEditor({
     })
   }
 
+  /**
+   * 수식 바로 뒤에 zero-width 텍스트 노드를 캐럿 자리로 만들어 둔다. execCommand의 암묵적
+   * 캐럿 배치에 기대지 않고 우리가 직접 위치를 보장하면, 캐럿이 "수식 바로 옆(엘리먼트
+   * 경계)"이 아니라 "수식 바로 다음의 평범한 텍스트 노드 안"에 있게 되어, 그 상태에서
+   * Enter/Space를 눌러도 contenteditable=false 원자 요소 경계에서 브라우저가 벌이는
+   * 복제·풀림 같은 특이 동작을 피할 수 있다.
+   */
+  function placeCaretAfter(node) {
+    const caretNode = document.createTextNode('​')
+    node.after(caretNode)
+    const range = document.createRange()
+    range.setStart(caretNode, 1)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+
   function insertMath(expression, mode) {
     const el = editorRef.current
     if (!el || !mathDialog) return
     const html = createMathHtml(expression, mode)
+    const template = document.createElement('template')
+    template.innerHTML = html
+    const mathNode = template.content.firstChild
     if (mathDialog.node?.isConnected) {
-      const template = document.createElement('template')
-      template.innerHTML = html
-      mathDialog.node.replaceWith(template.content.firstChild)
+      mathDialog.node.replaceWith(mathNode)
     } else {
       el.focus()
       const sel = window.getSelection()
       if (savedRangeRef.current) { sel.removeAllRanges(); sel.addRange(savedRangeRef.current) }
-      document.execCommand('insertHTML', false, html)
+      const range = sel.rangeCount ? sel.getRangeAt(0) : null
+      if (range && el.contains(range.startContainer)) {
+        range.deleteContents()
+        range.insertNode(mathNode)
+      } else {
+        el.appendChild(mathNode)
+      }
     }
+    // createMathHtml()이 만드는 초기 마크업은 KaTeX로 그려지기 전의 평문 라벨이다 — 값이
+    // 실제로 안 바뀌는(내가 방금 넣은 걸 그대로 되읽는) commit 이후에는 [value] 이펙트가
+    // 다시 그리기를 건너뛰므로, 방금 넣거나 고친 수식은 여기서 직접 한 번 그려줘야 한다.
+    renderMathInElement(el)
+    placeCaretAfter(mathNode)
     setMathDialog(null)
     commit('insertMath')
   }
