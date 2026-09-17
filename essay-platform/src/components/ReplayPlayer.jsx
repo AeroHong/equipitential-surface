@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { htmlToPlainText } from '../utils/richText.js'
 import { sanitizeAnswerHtml } from '../utils/sanitizeHtml.js'
 import { computeSurvivingPaste } from '../utils/pasteProvenance.js'
+import { renderMathInElement } from '../utils/mathExpression.js'
 
 function minMax(values) {
   let min = Infinity
@@ -103,6 +104,7 @@ function virtualToReal(segments, v) {
  * (최대 300x)으로 진행한다.
  */
 export default function ReplayPlayer({ inputEvents, keydownEvents, pasteEvents, aiFlags }) {
+  const replayRef = React.useRef(null)
   const allT = useMemo(
     () => [...inputEvents.map(e => e.t), ...keydownEvents.map(e => e.t), ...pasteEvents.map(e => e.t)],
     [inputEvents, keydownEvents, pasteEvents]
@@ -161,6 +163,8 @@ export default function ReplayPlayer({ inputEvents, keydownEvents, pasteEvents, 
 
   const pastedCharTotal = pasteEvents.reduce((sum, e) => sum + (e.charCount || 0), 0)
 
+  useEffect(() => { renderMathInElement(replayRef.current) }, [currentHtml])
+
   // 붙여넣었다가 지우고 다시 직접 입력한 부분은 "붙여넣기"로 세지 않는다 — 최종본에
   // 실제로 살아남은 붙여넣기 글자만 비율에 반영한다(utils/pasteProvenance.js).
   const { finalLength, survivingPastedLength } = useMemo(
@@ -214,6 +218,7 @@ export default function ReplayPlayer({ inputEvents, keydownEvents, pasteEvents, 
           [&_ul]/[&_ol]/[&_img]는 EssayEditor.jsx와 같은 스타일. */}
       {currentHtml ? (
         <div
+          ref={replayRef}
           className="rounded-2xl border border-gray-200 bg-white px-5 py-4 min-h-[220px] text-[15px] leading-relaxed text-gray-800 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg"
           dangerouslySetInnerHTML={{ __html: currentHtml }}
         />

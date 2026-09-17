@@ -55,3 +55,11 @@ html, body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* 저장되는 수식 wrapper는 KaTeX를 그리기 전에는 읽을 수 있는 평문을 담고, 렌더 후에는
+   수식으로 바뀐다. contentEditable 안에서는 한 덩어리로 취급한다. */
+.student-math { cursor: pointer; color: #1e293b; }
+.student-math--inline { display: inline-block; margin: 0 0.12em; vertical-align: middle; }
+.student-math--block { display: block; width: fit-content; max-width: 100%; margin: 0.7em auto; text-align: center; }
+[contenteditable="true"] .student-math { border-radius: 0.35rem; outline: 1px solid transparent; }
+[contenteditable="true"] .student-math:hover, [contenteditable="true"] .student-math:focus { outline-color: #a5b4fc; background: #eef2ff; }

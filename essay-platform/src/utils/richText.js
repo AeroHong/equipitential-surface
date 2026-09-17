@@ -13,7 +13,10 @@
  */
 export function htmlToPlainText(html) {
   if (!html) return ''
-  const withBreaks = html
+  // 수식은 텍스트 분량이 아니라 하나의 수식 단위로 계산한다. KaTeX 렌더링 전후에
+  // 상관없이 data-math wrapper를 먼저 치환해야 내부 접근성 텍스트가 섞이지 않는다.
+  const withMathTokens = html.replace(/<span\b[^>]*\bdata-math=(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/span>/gi, '¤')
+  const withBreaks = withMathTokens
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|div|li|h[1-6]|blockquote)>/gi, '\n')
   const el = document.createElement('div')
@@ -23,4 +26,3 @@ export function htmlToPlainText(html) {
   // 막는다(예: 이미지만 넣고 글은 안 쓴 경우 charCount가 0이 아니라 1로 나오던 문제).
   return (el.textContent || '').replace(/^\n+|\n+$/g, '')
 }
-

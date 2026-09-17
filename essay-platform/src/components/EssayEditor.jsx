@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { htmlToPlainText } from '../utils/richText.js'
 import { sanitizeAnswerHtml } from '../utils/sanitizeHtml.js'
 import { isImageFile, uploadAnswerImage } from '../services/storage.js'
+import MathComposerDialog from './MathComposerDialog.jsx'
+import { createMathExpression, createMathHtml, decodeMathExpression, prepareMathForStorage, renderMathInElement } from '../utils/mathExpression.js'
 
 const TOOLS = [
   { cmd: 'bold', label: '굵게', glyph: 'B', glyphClass: 'font-bold' },
@@ -67,6 +69,8 @@ export default function EssayEditor({
   const fileInputRef = useRef(null)
   const [uploading, setUploading] = useState(0)
   const [uploadError, setUploadError] = useState('')
+  const [mathDialog, setMathDialog] = useState(null) // { expression, mode, node? }
+  const savedRangeRef = useRef(null)
 
   // 블록(문단/이미지 단위) 재배치 — RichTextEditor.jsx의 ⋮⋮ 손잡이와 같은 방식.
   const [hoveredBlock, setHoveredBlock] = useState(null) // { el, rect }
@@ -75,11 +79,15 @@ export default function EssayEditor({
   useEffect(() => {
     const el = editorRef.current
     if (el && value !== el.innerHTML) el.innerHTML = value || ''
+    if (el) renderMathInElement(el)
   }, [value])
 
   function commit(inputType) {
     const el = editorRef.current
     if (!el) return
+    // KaTeX의 화면용 내부 DOM은 저장하지 않는다. data-math와 읽기용 짧은 평문만 남겨
+    // 자동저장 스냅샷과 리플레이가 작고 안정적인 HTML을 갖게 한다.
+    prepareMathForStorage(el)
     const html = sanitizeAnswerHtml(el.innerHTML)
     if (html !== el.innerHTML) el.innerHTML = html
     onChange(html)
@@ -105,12 +113,64 @@ export default function EssayEditor({
     // 한글 IME 조합 중 keydown은 e.key가 'Process' 등으로 의미가 없어 리듬 로그에서 제외한다.
     // 일부 브라우저는 compositionstart 이전에 Process keydown을 보내므로 nativeEvent도 함께 확인한다.
     if (isComposingRef.current || e.nativeEvent?.isComposing || e.key === 'Process') return
+    const focusedMath = e.target.closest?.('[data-math]')
+    if (focusedMath && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault()
+      openExistingMath(focusedMath)
+      return
+    }
+    if (e.key === '#' && !disabled) {
+      e.preventDefault()
+      openMathDialog()
+      return
+    }
     let k = 'other'
     if (e.key === 'Backspace' || e.key === 'Delete') k = 'backspace'
     else if (e.key === 'Enter') k = 'enter'
     else if (e.key === ' ') k = 'space'
     else if (e.key.length === 1) k = 'char'
     onLogKeydown?.(k)
+  }
+
+  function saveSelection() {
+    const sel = window.getSelection()
+    const range = sel?.rangeCount && editorRef.current?.contains(sel.getRangeAt(0).startContainer)
+      ? sel.getRangeAt(0).cloneRange() : null
+    savedRangeRef.current = range
+  }
+
+  function openMathDialog() {
+    if (disabled) return
+    saveSelection()
+    setMathDialog({ expression: createMathExpression(), mode: 'inline', node: null })
+  }
+
+  function openExistingMath(node) {
+    if (disabled) return
+    saveSelection()
+    setMathDialog({
+      expression: decodeMathExpression(node.getAttribute('data-math')),
+      mode: node.getAttribute('data-math-mode') === 'block' ? 'block' : 'inline',
+      node
+    })
+  }
+
+  function insertMath(expression, mode) {
+    const el = editorRef.current
+    if (!el || !mathDialog) return
+    const html = createMathHtml(expression, mode)
+    if (mathDialog.node?.isConnected) {
+      const template = document.createElement('template')
+      template.innerHTML = html
+      mathDialog.node.replaceWith(template.content.firstChild)
+    } else {
+      el.focus()
+      const sel = window.getSelection()
+      if (savedRangeRef.current) { sel.removeAllRanges(); sel.addRange(savedRangeRef.current) }
+      document.execCommand('insertHTML', false, html)
+    }
+    setMathDialog(null)
+    commit('insertMath')
   }
 
   function handleCompositionEnd() {
@@ -212,6 +272,11 @@ export default function EssayEditor({
     else scheduleHoverClear()
   }
 
+  function handleEditorClick(e) {
+    const math = e.target.closest?.('[data-math]')
+    if (math) { e.preventDefault(); openExistingMath(math) }
+  }
+
   function handleEditorMouseLeave() {
     if (!blockDrag) scheduleHoverClear()
   }
@@ -307,6 +372,16 @@ export default function EssayEditor({
         <button
           type="button"
           onMouseDown={e => e.preventDefault()}
+          onClick={openMathDialog}
+          disabled={disabled}
+          title="수식 삽입 (#)"
+          className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          √
+        </button>
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
           title="이미지 삽입 (붙여넣기·끌어놓기도 됩니다)"
@@ -342,6 +417,7 @@ export default function EssayEditor({
           onDrop={handleDrop}
           onDragOver={e => e.preventDefault()}
           onKeyDown={handleKeyDown}
+          onClick={handleEditorClick}
           onCompositionStart={() => { isComposingRef.current = true }}
           onCompositionEnd={handleCompositionEnd}
           className={`relative min-h-[320px] w-full rounded-2xl border px-5 py-4 text-[15px] leading-relaxed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg ${
@@ -394,6 +470,14 @@ export default function EssayEditor({
           {charCount}{wordLimitGuide ? ` / ${wordLimitGuide}자` : '자'}
         </span>
       </div>
+      {mathDialog && (
+        <MathComposerDialog
+          initialExpression={mathDialog.expression}
+          initialMode={mathDialog.mode}
+          onCancel={() => { setMathDialog(null); editorRef.current?.focus() }}
+          onConfirm={insertMath}
+        />
+      )}
     </div>
   )
 }
