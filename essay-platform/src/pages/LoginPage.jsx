@@ -4,10 +4,6 @@ import { signInWithPopup } from 'firebase/auth'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase.js'
 
-// 개발 중에는 도메인 제한 해제 (배포 전 true로 변경) — physlab과 동일한 정책
-const ENFORCE_DOMAIN = false
-const ALLOWED_DOMAIN = 'seonyoo.hs.kr'
-
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -20,15 +16,9 @@ export default function LoginPage() {
     try {
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
-      const email = user.email || ''
 
-      if (ENFORCE_DOMAIN && !email.endsWith(`@${ALLOWED_DOMAIN}`)) {
-        await auth.signOut()
-        setError(`학교 구글 계정(@${ALLOWED_DOMAIN})으로만 로그인할 수 있습니다.`)
-        setLoading(false)
-        return
-      }
-
+      // 학교 도메인 제한은 두지 않는다 — 개인 계정으로 들어온 학생은 로그인 자체는
+      // 허용하고, 과제 화면(EssayWritePage)에서 학번·이름을 따로 받아 본인 확인을 한다.
       // Firestore users 컬렉션은 physlab과 공유 — 없으면 student로 신규 생성
       const userRef = doc(db, 'users', user.uid)
       const userSnap = await getDoc(userRef)
@@ -99,10 +89,6 @@ export default function LoginPage() {
           )}
           {loading ? '로그인 중...' : '구글 계정으로 로그인'}
         </button>
-
-        <p className="text-center text-xs text-gray-400 mt-4">
-          학교 구글 계정 <span className="font-mono text-gray-500">@{ALLOWED_DOMAIN}</span> 만 이용 가능합니다.
-        </p>
       </div>
     </div>
   )

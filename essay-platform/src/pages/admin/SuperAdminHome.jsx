@@ -4,7 +4,7 @@ import { signOut } from 'firebase/auth'
 import { auth } from '../../firebase.js'
 import { useAuth } from '../../App.jsx'
 import {
-  listTeacherRequests, listTeachers,
+  watchTeacherRequests, watchTeachers,
   approveTeacherRequest, rejectTeacherRequest, revokeTeacherRole
 } from '../../services/users.js'
 import { listPassages, listAssignments } from '../../services/essay.js'
@@ -30,11 +30,13 @@ export default function SuperAdminHome() {
   const [loading, setLoading] = useState(true)
   const [busyUid, setBusyUid] = useState('')
 
-  function reload() {
-    setLoading(true)
-    Promise.all([listTeacherRequests(), listTeachers()]).then(async ([r, t]) => {
-      setRequests(r)
-      const withStats = await Promise.all(t.map(async teacher => {
+  // 실시간 구독 — 다른 교사가 권한을 요청하거나 이 화면에서 승인/거절/해제하면, 새로고침
+  // 없이 바로 목록이 갱신된다(Firestore 로컬 캐시가 즉시 반영하므로 수동 재조회가 필요 없다).
+  // 교사별 지문/배정/양식 개수는 실시간일 필요가 없는 집계라 목록이 바뀔 때만 별도로 센다.
+  useEffect(() => {
+    const unsubRequests = watchTeacherRequests(setRequests)
+    const unsubTeachers = watchTeachers(async baseTeachers => {
+      const withStats = await Promise.all(baseTeachers.map(async teacher => {
         const [passages, assignments, templates] = await Promise.all([
           listPassages(teacher.uid),
           listAssignments(teacher.uid),
@@ -50,15 +52,13 @@ export default function SuperAdminHome() {
       setTeachers(withStats)
       setLoading(false)
     })
-  }
-
-  useEffect(() => { reload() }, [])
+    return () => { unsubRequests(); unsubTeachers() }
+  }, [])
 
   async function handleApprove(uid) {
     setBusyUid(uid)
     try {
       await approveTeacherRequest(uid)
-      reload()
     } finally {
       setBusyUid('')
     }
@@ -69,7 +69,6 @@ export default function SuperAdminHome() {
     setBusyUid(uid)
     try {
       await rejectTeacherRequest(uid)
-      reload()
     } finally {
       setBusyUid('')
     }
@@ -80,7 +79,6 @@ export default function SuperAdminHome() {
     setBusyUid(uid)
     try {
       await revokeTeacherRole(uid)
-      reload()
     } finally {
       setBusyUid('')
     }

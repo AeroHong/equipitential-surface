@@ -6,6 +6,7 @@ import {
   saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections
 } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
+import { setManualStudentIdentity } from '../../services/users.js'
 import { scanText } from '../../utils/aiPatterns.js'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { useAutosave } from '../../hooks/useAutosave.js'
@@ -30,6 +31,13 @@ export default function EssayWritePage() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  // 클래스룸 연동 없이 개인 구글 계정으로 접속한 경우에만 쓰는 학번·이름 수동 입력 상태.
+  const [needsIdentity, setNeedsIdentity] = useState(false)
+  const [studentIdInput, setStudentIdInput] = useState('')
+  const [studentNameInput, setStudentNameInput] = useState('')
+  const [identityError, setIdentityError] = useState('')
+  const [savingIdentity, setSavingIdentity] = useState(false)
+
   const isStructured = assignment?.responseType === 'structured'
 
   useEffect(() => {
@@ -46,6 +54,21 @@ export default function EssayWritePage() {
           if (!cancelled) { setError('존재하지 않는 과제입니다.'); setLoading(false) }
           return
         }
+        if (cancelled) return
+        setAssignment(a)
+
+        // 클래스룸 연동 없이 개인 구글 계정으로 접속한 경우(=로그인 계정 도메인이 이 배정을
+        // 만든 교사의 도메인과 다름), 구글 표시 이름만으론 본인 확인이 안 되므로 학번·이름을
+        // 먼저 받는다. 한 번 입력하면 users/{uid}.manualIdentity에 저장되어(services/users.js)
+        // 다음부턴(다른 배정에서도) 다시 묻지 않는다. 같은 도메인이면 지금처럼 그대로 통과.
+        const studentDomain = user.email?.includes('@') ? user.email.split('@')[1] : ''
+        const isForeignAccount = Boolean(a.teacherDomain) && Boolean(studentDomain) && studentDomain !== a.teacherDomain
+        if (isForeignAccount && !userInfo?.manualIdentity) {
+          setNeedsIdentity(true)
+          setLoading(false)
+          return
+        }
+        setNeedsIdentity(false)
 
         // 지문은 이제 선택 사항이다 — structured 응답은 지문 없이 배정될 수 있다.
         let p = null
@@ -79,7 +102,6 @@ export default function EssayWritePage() {
           throw new Error(`내 작성 공간 생성 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
         }
         if (cancelled) return
-        setAssignment(a)
         setPassage(p)
         setTemplate(tpl)
         setSubmission(sub)
@@ -95,6 +117,26 @@ export default function EssayWritePage() {
     if (user) load()
     return () => { cancelled = true }
   }, [assignmentId, user, userInfo])
+
+  async function handleIdentitySubmit(e) {
+    e.preventDefault()
+    if (!studentIdInput.trim() || !studentNameInput.trim()) {
+      setIdentityError('학번과 이름을 모두 입력해주세요.')
+      return
+    }
+    setSavingIdentity(true)
+    setIdentityError('')
+    try {
+      await setManualStudentIdentity(user.uid, { studentId: studentIdInput, name: studentNameInput })
+      // users/{uid} 실시간 구독(App.jsx)이 userInfo를 갱신하면, 위 useEffect가 그 변화를 보고
+      // 자동으로 다시 실행되어 배정을 마저 불러온다 — 여기서 따로 다시 부를 필요가 없다.
+    } catch (err) {
+      console.error('학번·이름 저장 실패:', err)
+      setIdentityError('저장 중 오류가 발생했습니다. 다시 시도해주세요.')
+    } finally {
+      setSavingIdentity(false)
+    }
+  }
 
   const locked = submission?.status === 'submitted' || assignment?.status === 'closed'
 
@@ -174,6 +216,49 @@ export default function EssayWritePage() {
           <p className="text-gray-500 mb-4">{error}</p>
           <button onClick={() => navigate('/')} className="text-indigo-600 text-sm underline">홈으로</button>
         </div>
+      </div>
+    )
+  }
+
+  if (needsIdentity) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
+        <form onSubmit={handleIdentitySubmit} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <p className="text-3xl mb-2 text-center">🙋</p>
+          <p className="text-gray-800 font-bold text-center mb-1">학번과 이름을 알려주세요</p>
+          <p className="text-gray-400 text-xs text-center mb-5">
+            학교 계정이 아닌 개인 계정으로 접속하셨어요. 작성 기록을 본인 것으로 정확히 남기기 위해 한 번만 입력하면 다음부터는 다시 묻지 않습니다.
+          </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">학번</label>
+              <input
+                value={studentIdInput}
+                onChange={e => setStudentIdInput(e.target.value)}
+                placeholder="예: 10305"
+                autoFocus
+                className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">이름</label>
+              <input
+                value={studentNameInput}
+                onChange={e => setStudentNameInput(e.target.value)}
+                placeholder="예: 홍길동"
+                className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300"
+              />
+            </div>
+          </div>
+          {identityError && <p className="text-xs text-red-500 mt-3">{identityError}</p>}
+          <button
+            type="submit"
+            disabled={savingIdentity}
+            className="mt-5 w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
+          >
+            {savingIdentity ? '저장 중...' : '확인'}
+          </button>
+        </form>
       </div>
     )
   }

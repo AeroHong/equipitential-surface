@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { onAuthStateChanged } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db } from './firebase.js'
 import { requestTeacherRole } from './services/users.js'
 
@@ -31,31 +31,45 @@ function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    // users/{uid}를 실시간 구독한다(예전엔 로그인 시 한 번만 getDoc으로 읽었다) — super_admin이
+    // 교사 권한을 승인/거절/해제하면, 그 계정으로 로그인해 대기 화면을 보고 있던 사람의
+    // 화면이 새로고침 없이 바로 다음 화면(교사 홈 등)으로 넘어가게 하기 위함.
+    let unsubscribeUserDoc = null
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      unsubscribeUserDoc?.()
+      unsubscribeUserDoc = null
       if (firebaseUser) {
         setUser(firebaseUser)
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid))
-          if (userDoc.exists()) {
-            const data = userDoc.data()
-            setUserRole(data.role || 'student')
-            setUserInfo(data)
-          } else {
+        unsubscribeUserDoc = onSnapshot(
+          doc(db, 'users', firebaseUser.uid),
+          snap => {
+            if (snap.exists()) {
+              const data = snap.data()
+              setUserRole(data.role || 'student')
+              setUserInfo(data)
+            } else {
+              setUserRole('student')
+              setUserInfo(null)
+            }
+            setLoading(false)
+          },
+          err => {
+            console.error('사용자 정보 구독 실패:', err)
             setUserRole('student')
-            setUserInfo(null)
+            setLoading(false)
           }
-        } catch (err) {
-          console.error('사용자 정보 조회 실패:', err)
-          setUserRole('student')
-        }
+        )
       } else {
         setUser(null)
         setUserRole(null)
         setUserInfo(null)
+        setLoading(false)
       }
-      setLoading(false)
     })
-    return unsubscribe
+    return () => {
+      unsubscribeAuth()
+      unsubscribeUserDoc?.()
+    }
   }, [])
 
   return (

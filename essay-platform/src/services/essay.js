@@ -113,6 +113,13 @@ export async function listAssignmentsUsingPassage(passageId) {
  *   responseType: 'essay'(기본, passageId 필수) | 'structured'(templateId 필수, passageId 선택)
  * @returns {Promise<string>} assignmentId
  */
+/** 이메일의 @ 뒤 도메인만 뽑는다(없으면 빈 문자열) — 학생 계정이 배정을 만든 교사와 같은
+ *  학교 도메인인지 비교하는 데 쓴다(services/users.js의 학번·이름 수동 입력 분기). */
+function emailDomain(email) {
+  const i = (email || '').indexOf('@')
+  return i >= 0 ? email.slice(i + 1) : ''
+}
+
 export async function createAssignment(data) {
   const docRef = await addDoc(collection(db, 'essayAssignments'), {
     passageId: data.passageId || null,
@@ -124,6 +131,10 @@ export async function createAssignment(data) {
     status: 'open',
     classroom: null,
     createdBy: auth.currentUser?.uid || '',
+    // 학생은 다른 사용자(교사)의 users/{uid} 문서를 읽을 권한이 없어서, 배정을 만들 때
+    // 교사 이메일의 도메인만 이 문서에 함께 저장해둔다 — 학생 쪽에서 "같은 학교 도메인인지"를
+    // 판단하는 유일한 방법이라 여기서 반드시 채워야 한다.
+    teacherDomain: emailDomain(auth.currentUser?.email),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   })
@@ -138,6 +149,9 @@ export async function createAssignment(data) {
 export async function updateAssignment(assignmentId, data) {
   await updateDoc(doc(db, 'essayAssignments', assignmentId), {
     ...data,
+    // 예전에 만든 배정엔 teacherDomain이 없을 수 있다 — 수정할 때마다 채워 넣어 자연스럽게
+    // 새 배정과 동일한 방식으로 동작하게 한다.
+    teacherDomain: emailDomain(auth.currentUser?.email),
     updatedAt: serverTimestamp()
   })
 }
