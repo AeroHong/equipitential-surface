@@ -55,8 +55,9 @@ export function useEssayLogger(submissionId) {
     else scheduleFlush()
   }, [flushNow])
 
-  const logKeydown = useCallback((k) => {
-    keydownBufRef.current.push({ t: Date.now(), k })
+  // sectionId는 구조화된 응답(섹션별 입력)에서만 쓴다 — essay 타입 호출부는 안 넘기면 된다.
+  const logKeydown = useCallback((k, sectionId) => {
+    keydownBufRef.current.push(sectionId ? { t: Date.now(), k, sectionId } : { t: Date.now(), k })
     if (keydownBufRef.current.length >= KEYDOWN_BATCH_LIMIT) flushNow()
     else scheduleFlush()
   }, [flushNow])

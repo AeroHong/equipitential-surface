@@ -70,6 +70,15 @@ service cloud.firestore {
         (isAdmin() || (isTeacher() && resource.data.createdBy == request.auth.uid));
     }
 
+    // 구조화된 응답 템플릿(탐구보고서 등) — 지문과 똑같은 소유권 패턴
+    match /reportTemplates/{id} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && isEssayStaff() &&
+        request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.createdBy == request.auth.uid));
+    }
+
     // 제출물: 본인(학생) 또는 그 배정을 만든 교사(teacherUid)·super_admin만 접근.
     // 학생은 본인 uid 문서만, 그리고 status가 'submitted'로 잠기기 전까지만 수정 가능 —
     // 제출 후 잠금을 클라이언트 UI뿐 아니라 규칙에서도 강제해, devtools로 직접 호출해도

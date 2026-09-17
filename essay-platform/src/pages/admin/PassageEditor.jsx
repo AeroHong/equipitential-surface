@@ -37,7 +37,7 @@ function legacyToHtml(passage) {
 
 export default function PassageEditor() {
   const navigate = useNavigate()
-  const { user, userRole } = useAuth()
+  const { user } = useAuth()
   const { passageId } = useParams()
   const isEdit = Boolean(passageId)
   const [form, setForm] = useState(emptyForm)
@@ -51,9 +51,9 @@ export default function PassageEditor() {
   useEffect(() => {
     if (!isEdit) return
     getPassage(passageId).then(p => {
-      // teacher는 본인이 만든 지문만 수정할 수 있다 — URL을 직접 알아도 남의 지문은
-      // 열리지 않게 화면에서도 막는다(저장 자체는 firestore.rules가 어차피 막는다).
-      if (p && userRole === 'teacher' && p.createdBy !== user.uid) {
+      // 본인이 만든 지문만 수정할 수 있다 — URL을 직접 알아도 남의 지문은 열리지 않게
+      // 화면에서도 막는다(저장 자체는 firestore.rules가 어차피 막는다).
+      if (p && p.createdBy !== user.uid) {
         setAccessDenied(true)
         setLoading(false)
         return
@@ -63,7 +63,7 @@ export default function PassageEditor() {
       }
       setLoading(false)
     })
-  }, [isEdit, passageId, user, userRole])
+  }, [isEdit, passageId, user])
 
   function set(key, value) {
     setForm(prev => ({ ...prev, [key]: value }))

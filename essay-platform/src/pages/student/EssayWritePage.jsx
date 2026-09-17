@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
-import { getAssignment, getPassage, getOrCreateSubmission, saveSubmissionDraft, submitSubmission } from '../../services/essay.js'
+import {
+  getAssignment, getPassage, getOrCreateSubmission,
+  saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections
+} from '../../services/essay.js'
+import { getTemplate } from '../../services/reportTemplates.js'
 import { scanText } from '../../utils/aiPatterns.js'
+import { htmlToPlainText } from '../../utils/richText.js'
 import { useAutosave } from '../../hooks/useAutosave.js'
 import { useEssayLogger } from '../../hooks/useEssayLogger.js'
 import PassageViewer from './PassageViewer.jsx'
 import EssayEditor from '../../components/EssayEditor.jsx'
+import StructuredReportEditor from './StructuredReportEditor.jsx'
 import SaveStateLabel from '../../components/SaveStateLabel.jsx'
 
 export default function EssayWritePage() {
@@ -16,11 +22,15 @@ export default function EssayWritePage() {
 
   const [assignment, setAssignment] = useState(null)
   const [passage, setPassage] = useState(null)
+  const [template, setTemplate] = useState(null)
   const [submission, setSubmission] = useState(null)
   const [text, setText] = useState('')
+  const [sections, setSections] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const isStructured = assignment?.responseType === 'structured'
 
   useEffect(() => {
     let cancelled = false
@@ -36,13 +46,27 @@ export default function EssayWritePage() {
           if (!cancelled) { setError('존재하지 않는 과제입니다.'); setLoading(false) }
           return
         }
-        let p
-        try {
-          p = await getPassage(a.passageId)
-        } catch (err) {
-          throw new Error(`지문 정보 접근 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
+
+        // 지문은 이제 선택 사항이다 — structured 응답은 지문 없이 배정될 수 있다.
+        let p = null
+        if (a.passageId) {
+          try {
+            p = await getPassage(a.passageId)
+          } catch (err) {
+            throw new Error(`지문 정보 접근 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
+          }
+          if (!p) throw new Error('연결된 지문을 찾을 수 없습니다. 선생님께 알려주세요.')
         }
-        if (!p) throw new Error('연결된 지문을 찾을 수 없습니다. 선생님께 알려주세요.')
+
+        let tpl = null
+        if (a.responseType === 'structured') {
+          try {
+            tpl = await getTemplate(a.templateId)
+          } catch (err) {
+            throw new Error(`보고서 양식 접근 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
+          }
+          if (!tpl) throw new Error('연결된 보고서 양식을 찾을 수 없습니다. 선생님께 알려주세요.')
+        }
 
         let sub
         try {
@@ -50,15 +74,17 @@ export default function EssayWritePage() {
             uid: user.uid,
             name: userInfo?.name || user.displayName || '',
             class: userInfo?.class || ''
-          }, a.createdBy)
+          }, a.createdBy, tpl?.sections)
         } catch (err) {
           throw new Error(`내 작성 공간 생성 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
         }
         if (cancelled) return
         setAssignment(a)
         setPassage(p)
+        setTemplate(tpl)
         setSubmission(sub)
         setText(sub.text || '')
+        setSections(sub.sections || {})
       } catch (err) {
         console.error('과제 로드 실패:', err)
         if (!cancelled) setError(err.message || '과제를 불러오지 못했습니다.')
@@ -73,25 +99,57 @@ export default function EssayWritePage() {
   const locked = submission?.status === 'submitted' || assignment?.status === 'closed'
 
   const { saveState, trigger, flushNow } = useAutosave(async (value) => {
-    const aiFlags = scanText(value)
-    await saveSubmissionDraft(submission.id, { text: value, charCount: value.length, aiFlags })
+    if (isStructured) {
+      const withAiFlags = Object.fromEntries(
+        Object.entries(value).map(([id, ans]) => [id, { ...ans, aiFlags: scanText(htmlToPlainText(ans.text || '')) }])
+      )
+      await saveSectionsDraft(submission.id, withAiFlags)
+    } else {
+      const plainText = htmlToPlainText(value)
+      const aiFlags = scanText(plainText)
+      await saveSubmissionDraft(submission.id, { text: value, charCount: plainText.length, aiFlags })
+    }
   }, { delay: 700 })
 
   const { logInput, logKeydown, logPaste, flushNow: flushLogs } = useEssayLogger(submission?.id)
 
-  function handleChange(value) {
+  function handleTextChange(value) {
     setText(value)
     if (!locked) trigger(value)
   }
 
+  function handleSectionsChange(nextSections) {
+    setSections(nextSections)
+    if (!locked) trigger(nextSections)
+  }
+
+  const requiredMissing = isStructured
+    ? (template?.sections || []).filter(s => s.required && !htmlToPlainText(sections[s.id]?.text || '').trim())
+    : []
+  const canSubmit = isStructured
+    ? requiredMissing.length === 0
+    : htmlToPlainText(text).trim().length > 0
+
   async function handleSubmit() {
+    if (isStructured && requiredMissing.length > 0) {
+      alert(`아직 채우지 않은 필수 항목이 있습니다: ${requiredMissing.map(s => s.heading || s.groupLabel).join(', ')}`)
+      return
+    }
     if (!window.confirm('제출하시겠어요? 제출 후에는 선생님이 다시 열어주기 전까지 수정할 수 없습니다.')) return
     setSubmitting(true)
     try {
       await flushNow()
       await flushLogs()
-      const aiFlags = scanText(text)
-      await submitSubmission(submission.id, { text, charCount: text.length, aiFlags })
+      if (isStructured) {
+        const withAiFlags = Object.fromEntries(
+          Object.entries(sections).map(([id, ans]) => [id, { ...ans, aiFlags: scanText(htmlToPlainText(ans.text || '')) }])
+        )
+        await submitSections(submission.id, withAiFlags)
+      } else {
+        const plainText = htmlToPlainText(text)
+        const aiFlags = scanText(plainText)
+        await submitSubmission(submission.id, { text, charCount: plainText.length, aiFlags })
+      }
       setSubmission(s => ({ ...s, status: 'submitted' }))
     } catch (err) {
       console.error('제출 실패:', err)
@@ -148,40 +206,65 @@ export default function EssayWritePage() {
       {/* 안내 배너 */}
       <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2 text-center">
         <p className="text-xs text-indigo-700">
-          본인이 직접 작성해야 하며, 작성 과정이 함께 기록됩니다. 목표 분량은 {wordLimit}자 내외입니다.
+          본인이 직접 작성해야 하며, 작성 과정이 함께 기록됩니다.{' '}
+          {isStructured ? '각 항목의 안내에 따라 빠짐없이 작성해주세요.' : `목표 분량은 ${wordLimit}자 내외입니다.`}
           {isPastDue && !locked && <span className="text-red-600 font-medium"> · 마감일이 지났습니다.</span>}
         </p>
       </div>
 
       <main className="flex-1 p-4 max-w-6xl mx-auto w-full min-h-0">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-160px)]">
+        <div className={passage ? 'grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-160px)]' : ''}>
           {/* min-h-0: flex/grid 항목은 기본적으로 내용 높이만큼 늘어나려 해서, 지정한 높이(h-full) 안에서
               PassageViewer 자체의 overflow-y-auto가 실제로 동작하려면 이 min-h-0이 꼭 필요하다. */}
-          <div className="min-h-0 h-[50vh] lg:h-full">
-            <PassageViewer passage={passage} />
-          </div>
-          <div className="flex flex-col min-h-0 h-[60vh] lg:h-full">
+          {passage && (
+            <div className="min-h-0 h-[50vh] lg:h-full">
+              <PassageViewer passage={passage} />
+            </div>
+          )}
+          {/* overflow-y-auto: 지문이 있는 배정은 왼쪽(지문)과 오른쪽(작성 영역)을 각각 독립적으로
+              스크롤시킨다. 오른쪽 칸(질문+입력창+제출 버튼)이 배정된 높이(h-[60vh]/lg:h-full)를
+              넘으면 이 칸만 스크롤되고, 왼쪽 지문 칸은 그 위의 min-h-0/h-full로 따로 스크롤된다.
+              입력창(EssayEditor)은 autoResize로 내부 스크롤 없이 글자 수만큼 길어지므로, 넘친
+              내용을 보려면 이 칸을 스크롤하면 된다 — 제출 버튼도 입력창 바로 아래에 같은 칸
+              안에 있어 함께 스크롤된다. */}
+          <div className={passage ? 'flex flex-col min-h-0 h-[60vh] lg:h-full overflow-y-auto' : 'flex flex-col'}>
             {passage?.questionPrompt && (
               <div className="flex-shrink-0 rounded-xl bg-indigo-50 border border-indigo-100 p-3 mb-3">
                 <p className="text-xs font-bold text-indigo-700 mb-1">📝 논술 문항</p>
                 <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{passage.questionPrompt}</p>
               </div>
             )}
-            <div className="flex-1 min-h-0">
+
+            {isStructured ? (
+              <StructuredReportEditor
+                template={template}
+                sections={sections}
+                onChange={handleSectionsChange}
+                disabled={locked}
+                logInput={logInput}
+                logKeydown={logKeydown}
+                logPaste={logPaste}
+              />
+            ) : (
               <EssayEditor
                 value={text}
-                onChange={handleChange}
+                onChange={handleTextChange}
                 disabled={locked}
                 wordLimitGuide={wordLimit}
                 onLogInput={logInput}
                 onLogKeydown={logKeydown}
                 onLogPaste={logPaste}
               />
-            </div>
+            )}
+
+            {/* 제출 버튼은 입력창 바로 아래, 이 칸(작성 영역) 안에 함께 있다 — 입력창이
+                autoResize로 길어지면 버튼도 같이 내려가고, 화면을 넘으면 이 칸 자체가
+                overflow-y-auto로 스크롤되면서 버튼도 함께 스크롤된다. 왼쪽 지문 칸은
+                별도 높이/스크롤을 가진 형제라 이 칸과 독립적으로 스크롤된다. */}
             {!locked && (
               <button
                 onClick={handleSubmit}
-                disabled={submitting || text.trim().length === 0}
+                disabled={submitting || !canSubmit}
                 className="mt-3 flex-shrink-0 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-40 transition-colors active:scale-95"
               >
                 {submitting ? '제출 중...' : '제출하기'}

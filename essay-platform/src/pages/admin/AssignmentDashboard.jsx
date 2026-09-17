@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment } from '../../services/essay.js'
+import { getTemplate } from '../../services/reportTemplates.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
+import { htmlToPlainText } from '../../utils/richText.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
 
 function formatTime(ts) {
@@ -18,9 +20,10 @@ function formatTime(ts) {
 export default function AssignmentDashboard() {
   const { assignmentId } = useParams()
   const navigate = useNavigate()
-  const { user, userRole } = useAuth()
+  const { user } = useAuth()
   const [assignment, setAssignment] = useState(null)
   const [passage, setPassage] = useState(null)
+  const [template, setTemplate] = useState(null)
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
   const [accessDenied, setAccessDenied] = useState(false)
@@ -34,21 +37,21 @@ export default function AssignmentDashboard() {
   useEffect(() => {
     let unsub = () => {}
     getAssignment(assignmentId).then(async a => {
-      // teacher는 본인이 만든 배정의 대시보드만 볼 수 있다 — URL을 직접 알아도 남의
-      // 제출 현황은 안 보이게 막는다(firestore.rules의 list 규칙도 어차피 막지만,
-      // 빈 화면으로만 보이면 왜 안 보이는지 알기 어렵다).
-      if (a && userRole === 'teacher' && a.createdBy !== user.uid) {
+      // 본인이 만든 배정의 대시보드만 볼 수 있다 — URL을 직접 알아도 남의 제출 현황은 안
+      // 보이게 막는다(firestore.rules의 list 규칙도 어차피 막지만, 빈 화면으로만 보이면
+      // 왜 안 보이는지 알기 어렵다).
+      if (a && a.createdBy !== user.uid) {
         setAccessDenied(true)
         setLoading(false)
         return
       }
       setAssignment(a)
-      if (a) setPassage(await getPassage(a.passageId))
-      const teacherUid = userRole === 'teacher' ? user.uid : undefined
-      unsub = subscribeSubmissions(assignmentId, data => { setSubmissions(data); setLoading(false) }, teacherUid)
+      if (a?.passageId) setPassage(await getPassage(a.passageId))
+      if (a?.responseType === 'structured' && a.templateId) setTemplate(await getTemplate(a.templateId))
+      unsub = subscribeSubmissions(assignmentId, data => { setSubmissions(data); setLoading(false) }, user.uid)
     })
     return () => unsub()
-  }, [assignmentId, user, userRole])
+  }, [assignmentId, user])
 
   async function handleReopen(sub) {
     if (!window.confirm(`${sub.studentName} 학생의 제출을 다시 열까요? 학생이 재수정할 수 있게 됩니다.`)) return
@@ -123,6 +126,33 @@ export default function AssignmentDashboard() {
 
   const wordLimit = assignment?.wordLimit || passage?.wordLimitGuide || 800
   const submittedCount = submissions.filter(s => s.status === 'submitted').length
+  const isStructured = assignment?.responseType === 'structured'
+
+  // structured 제출물은 붙여넣기/AI 신호가 섹션별로 쌓이므로(services/essay.js의
+  // sections.{id}.* dot-path 증가) 대시보드 표시용으로 섹션들을 합산해서 보여준다.
+  function sectionCompletion(sub) {
+    const secs = template?.sections || []
+    if (!secs.length) return null
+    const done = secs.filter(s => htmlToPlainText(sub.sections?.[s.id]?.text || '').trim().length > 0).length
+    return { done, total: secs.length }
+  }
+
+  function pastedInfo(sub) {
+    if (!isStructured) return { pastedCharTotal: sub.pastedCharTotal || 0 }
+    const pastedCharTotal = Object.values(sub.sections || {}).reduce((sum, s) => sum + (s.pastedCharTotal || 0), 0)
+    return { pastedCharTotal }
+  }
+
+  function aggregatedAiFlags(sub) {
+    if (!isStructured) return sub.aiFlags
+    const flagsList = Object.values(sub.sections || {}).map(s => s.aiFlags).filter(Boolean)
+    if (!flagsList.length) return null
+    return {
+      score: Math.max(...flagsList.map(f => f.score || 0)),
+      phraseMatches: [...new Set(flagsList.flatMap(f => f.phraseMatches || []))],
+      markdownHits: flagsList.some(f => f.markdownHits)
+    }
+  }
 
   if (accessDenied) {
     return (
@@ -145,7 +175,7 @@ export default function AssignmentDashboard() {
         </button>
         <div>
           <h1 className="text-base font-bold text-gray-900">{assignment?.title || '배정'}</h1>
-          <p className="text-xs text-gray-500">{passage?.title}</p>
+          <p className="text-xs text-gray-500">{passage?.title || (isStructured ? template?.title : '')}</p>
         </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="text-xs text-gray-500">제출 {submittedCount} / {submissions.length}</span>
@@ -233,7 +263,7 @@ export default function AssignmentDashboard() {
                 <tr className="border-b border-gray-100 text-left text-xs text-gray-400">
                   <th className="px-4 py-3 font-medium">이름 / 학급</th>
                   <th className="px-4 py-3 font-medium">상태</th>
-                  <th className="px-4 py-3 font-medium">글자수</th>
+                  <th className="px-4 py-3 font-medium">{isStructured ? '완료 섹션' : '글자수'}</th>
                   <th className="px-4 py-3 font-medium">마지막 저장</th>
                   <th className="px-4 py-3 font-medium">붙여넣기 비율</th>
                   <th className="px-4 py-3 font-medium">AI 의심 신호</th>
@@ -243,7 +273,9 @@ export default function AssignmentDashboard() {
               </thead>
               <tbody>
                 {submissions.map(sub => {
-                  const pasteRatio = sub.charCount > 0 ? Math.round((sub.pastedCharTotal / sub.charCount) * 100) : 0
+                  const { pastedCharTotal } = pastedInfo(sub)
+                  const pasteRatio = sub.charCount > 0 ? Math.round((pastedCharTotal / sub.charCount) * 100) : 0
+                  const completion = isStructured ? sectionCompletion(sub) : null
                   return (
                     <tr
                       key={sub.id}
@@ -261,12 +293,16 @@ export default function AssignmentDashboard() {
                           {sub.status === 'submitted' ? '제출완료' : '작성중'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-600">{sub.charCount} / {wordLimit}</td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {isStructured
+                          ? (completion ? `${completion.done} / ${completion.total}` : '—')
+                          : `${sub.charCount} / ${wordLimit}`}
+                      </td>
                       <td className="px-4 py-3 text-gray-400 text-xs">{formatTime(sub.lastSavedAt)}</td>
                       <td className={`px-4 py-3 text-xs font-medium ${pasteRatio >= 30 ? 'text-red-600' : 'text-gray-500'}`}>
-                        {pasteRatio}% ({sub.pastedCharTotal}자)
+                        {pasteRatio}% ({pastedCharTotal}자)
                       </td>
-                      <td className="px-4 py-3"><AiFlagBadge aiFlags={sub.aiFlags} /></td>
+                      <td className="px-4 py-3"><AiFlagBadge aiFlags={aggregatedAiFlags(sub)} /></td>
                       <td className="px-4 py-3 text-gray-400 text-xs">{sub.submittedAt ? formatTime(sub.submittedAt) : '—'}</td>
                       <td className="px-4 py-3">
                         {sub.status === 'submitted' && (

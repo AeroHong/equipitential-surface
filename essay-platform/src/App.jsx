@@ -8,12 +8,14 @@ import { requestTeacherRole } from './services/users.js'
 import LoginPage from './pages/LoginPage.jsx'
 import EssayWritePage from './pages/student/EssayWritePage.jsx'
 import EssayAdminHome from './pages/admin/EssayAdminHome.jsx'
+import SuperAdminHome from './pages/admin/SuperAdminHome.jsx'
 import PassageList from './pages/admin/PassageList.jsx'
 import PassageEditor from './pages/admin/PassageEditor.jsx'
 import AssignmentEditor from './pages/admin/AssignmentEditor.jsx'
 import AssignmentDashboard from './pages/admin/AssignmentDashboard.jsx'
 import ReplayView from './pages/admin/ReplayView.jsx'
-import TeacherRequests from './pages/admin/TeacherRequests.jsx'
+import TemplateList from './pages/admin/templates/TemplateList.jsx'
+import TemplateEditor from './pages/admin/templates/TemplateEditor.jsx'
 
 // ─── Auth Context (physlab의 App.jsx와 동일한 패턴 — 같은 Firebase 프로젝트를 쓰므로 users/{uid}.role도 그대로 통한다) ──
 export const AuthContext = createContext(null)
@@ -93,15 +95,24 @@ function RequireAdmin({ children }) {
   return children
 }
 
-// 교사 권한 요청 승인/거절은 super_admin 전용 — 교사끼리 서로 승인해주는 걸 막는다.
-function RequireSuperAdmin({ children }) {
+// 지문/배정/양식을 직접 만들고 관리하는 화면은 이제 teacher 전용이다 — super_admin은
+// "지문 생성/배정" 같은 실무가 아니라 교사 계정 관리(SuperAdminHome)만 한다. URL을 직접
+// 알아도 super_admin이 이 화면들에 들어오면 /admin(자신의 관리자 홈)으로 돌려보낸다.
+function RequireTeacherOnly({ children }) {
   const { user, userRole, loading } = useAuth()
   const location = useLocation()
 
   if (loading) return <LoadingSpinner />
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />
-  if (userRole !== 'super_admin') return <Navigate to="/admin" replace />
+  if (userRole !== 'teacher') return <Navigate to="/admin" replace />
   return children
+}
+
+/** /admin은 역할에 따라 완전히 다른 화면이다 — teacher는 배정 목록(EssayAdminHome),
+ * super_admin은 교사 계정 관리 중심의 전용 홈(SuperAdminHome). */
+function AdminHome() {
+  const { userRole } = useAuth()
+  return userRole === 'super_admin' ? <SuperAdminHome /> : <EssayAdminHome />
 }
 
 /** 아직 교사 권한이 없는 로그인 사용자(학생 기본값) — 과제 링크가 없다는 안내 + 권한 요청 버튼. */
@@ -192,15 +203,17 @@ export default function App() {
 
           <Route path="/write/:assignmentId" element={<RequireAuth><EssayWritePage /></RequireAuth>} />
 
-          <Route path="/admin" element={<RequireAdmin><EssayAdminHome /></RequireAdmin>} />
-          <Route path="/admin/passages" element={<RequireAdmin><PassageList /></RequireAdmin>} />
-          <Route path="/admin/passages/new" element={<RequireAdmin><PassageEditor /></RequireAdmin>} />
-          <Route path="/admin/passages/:passageId/edit" element={<RequireAdmin><PassageEditor /></RequireAdmin>} />
-          <Route path="/admin/assignments/new" element={<RequireAdmin><AssignmentEditor /></RequireAdmin>} />
-          <Route path="/admin/assignments/:assignmentId/edit" element={<RequireAdmin><AssignmentEditor /></RequireAdmin>} />
-          <Route path="/admin/assignments/:assignmentId" element={<RequireAdmin><AssignmentDashboard /></RequireAdmin>} />
-          <Route path="/admin/assignments/:assignmentId/student/:uid" element={<RequireAdmin><ReplayView /></RequireAdmin>} />
-          <Route path="/admin/teachers" element={<RequireSuperAdmin><TeacherRequests /></RequireSuperAdmin>} />
+          <Route path="/admin" element={<RequireAdmin><AdminHome /></RequireAdmin>} />
+          <Route path="/admin/passages" element={<RequireTeacherOnly><PassageList /></RequireTeacherOnly>} />
+          <Route path="/admin/passages/new" element={<RequireTeacherOnly><PassageEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/passages/:passageId/edit" element={<RequireTeacherOnly><PassageEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/assignments/new" element={<RequireTeacherOnly><AssignmentEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/assignments/:assignmentId/edit" element={<RequireTeacherOnly><AssignmentEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/assignments/:assignmentId" element={<RequireTeacherOnly><AssignmentDashboard /></RequireTeacherOnly>} />
+          <Route path="/admin/assignments/:assignmentId/student/:uid" element={<RequireTeacherOnly><ReplayView /></RequireTeacherOnly>} />
+          <Route path="/admin/templates" element={<RequireTeacherOnly><TemplateList /></RequireTeacherOnly>} />
+          <Route path="/admin/templates/new" element={<RequireTeacherOnly><TemplateEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/templates/:templateId/edit" element={<RequireTeacherOnly><TemplateEditor /></RequireTeacherOnly>} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
   onSnapshot,
   query,
   where,
@@ -85,16 +86,38 @@ export async function listPassages(teacherUid) {
     })
 }
 
+/**
+ * 지문 삭제. 이 지문을 쓰는 배정이 남아있으면 그 배정이 깨지므로(학생 화면에서 지문을 못
+ * 찾아 에러가 남), 호출 전에 listAssignmentsUsingPassage로 참조 여부를 먼저 확인해야 한다.
+ * @param {string} passageId
+ */
+export async function deletePassage(passageId) {
+  await deleteDoc(doc(db, 'essayPassages', passageId))
+}
+
+/**
+ * 이 지문을 passageId로 참조하는 배정 목록 — 삭제 전 경고/차단용.
+ * @param {string} passageId
+ * @returns {Promise<Array<{id: string, title: string}>>}
+ */
+export async function listAssignmentsUsingPassage(passageId) {
+  const snap = await getDocs(query(collection(db, 'essayAssignments'), where('passageId', '==', passageId)))
+  return snap.docs.map(d => ({ id: d.id, title: d.data().title || '(제목 없음)' }))
+}
+
 // ─── 배정(essayAssignments) CRUD ───────────────────────────────
 
 /**
  * 배정 생성 (createdBy는 현재 로그인 계정 — 이 배정으로 생기는 제출물도 같은 teacherUid를 갖는다)
- * @param {object} data {passageId, title, dueAt, wordLimit}
+ * @param {object} data {passageId, title, dueAt, wordLimit, responseType, templateId}
+ *   responseType: 'essay'(기본, passageId 필수) | 'structured'(templateId 필수, passageId 선택)
  * @returns {Promise<string>} assignmentId
  */
 export async function createAssignment(data) {
   const docRef = await addDoc(collection(db, 'essayAssignments'), {
-    passageId: data.passageId,
+    passageId: data.passageId || null,
+    responseType: data.responseType || 'essay',
+    templateId: data.templateId || null,
     title: data.title || '',
     dueAt: data.dueAt || null,
     wordLimit: data.wordLimit || null,
@@ -149,11 +172,45 @@ export async function listAssignments(teacherUid) {
     })
 }
 
+/**
+ * 배정 삭제. 이미 들어온 학생 제출물(essaySubmissions)은 같이 지우지 않는다 — 작성 기록은
+ * 보존하되, 배정 문서가 없어지면 목록/대시보드에서는 더 이상 접근할 수 없게 된다. 삭제 전
+ * countSubmissionsForAssignment로 몇 건이 걸려있는지 미리 보여주는 걸 권장한다.
+ * @param {string} assignmentId
+ */
+export async function deleteAssignment(assignmentId) {
+  await deleteDoc(doc(db, 'essayAssignments', assignmentId))
+}
+
+/**
+ * 배정에 달린 제출물 개수 — 삭제 확인 문구에 쓴다.
+ * @param {string} assignmentId
+ * @param {string} [teacherUid] teacher 역할로 부를 땐 반드시 넘겨야 한다(firestore.rules의
+ *   list 규칙이 쿼리에 teacherUid where절을 요구함) — subscribeSubmissions와 같은 이유.
+ * @returns {Promise<number>}
+ */
+export async function countSubmissionsForAssignment(assignmentId, teacherUid) {
+  const clauses = [where('assignmentId', '==', assignmentId)]
+  if (teacherUid) clauses.push(where('teacherUid', '==', teacherUid))
+  const snap = await getDocs(query(collection(db, 'essaySubmissions'), ...clauses))
+  return snap.size
+}
+
 // ─── 제출물(essaySubmissions) ───────────────────────────────────
 
 function submissionId(assignmentId, uid) {
   return `${assignmentId}__${uid}`
 }
+
+const emptySectionAnswer = () => ({
+  text: '',
+  charCount: 0,
+  pasteCount: 0,
+  pastedCharTotal: 0,
+  keydownCount: 0,
+  inputEventCount: 0,
+  aiFlags: { phraseMatches: [], markdownHits: false, score: 0 }
+})
 
 /**
  * 제출물 문서를 없으면 생성하고(upsert), 항상 최신 데이터를 반환
@@ -161,21 +218,23 @@ function submissionId(assignmentId, uid) {
  * @param {{uid: string, name: string, class: string}} student
  * @param {string} teacherUid 이 배정을 만든 교사 uid(essayAssignments.createdBy) — 제출물에도
  *   그대로 찍어둬야 그 교사의 대시보드 list 쿼리가 firestore.rules를 통과한다.
+ * @param {Array<{id:string}>} [templateSections] 구조화된 응답(reportTemplates.sections)이면
+ *   넘긴다 — 각 섹션 키를 빈 값으로 미리 채워둬서 화면 코드가 "이 키가 있는지"를 매번
+ *   체크하지 않아도 되게 한다. 안 넘기면 지금까지의 essay 타입(text 한 칸)으로 만든다.
  * @returns {Promise<object>}
  */
-export async function getOrCreateSubmission(assignmentId, student, teacherUid) {
+export async function getOrCreateSubmission(assignmentId, student, teacherUid, templateSections) {
   const id = submissionId(assignmentId, student.uid)
   const ref = doc(db, 'essaySubmissions', id)
   const snap = await getDoc(ref)
   if (snap.exists()) return { id, ...snap.data() }
 
-  const initial = {
+  const base = {
     assignmentId,
     teacherUid: teacherUid || '',
     studentUid: student.uid,
     studentName: student.name || '',
     studentClass: student.class || '',
-    text: '',
     charCount: 0,
     status: 'draft',
     startedAt: serverTimestamp(),
@@ -188,6 +247,14 @@ export async function getOrCreateSubmission(assignmentId, student, teacherUid) {
     aiFlags: { phraseMatches: [], markdownHits: false, score: 0 },
     updatedAt: serverTimestamp()
   }
+
+  const initial = templateSections?.length
+    ? {
+      ...base,
+      sections: Object.fromEntries(templateSections.map(sec => [sec.id, emptySectionAnswer()]))
+    }
+    : { ...base, text: '' }
+
   await setDoc(ref, initial)
   return { id, ...initial }
 }
@@ -222,6 +289,43 @@ export async function submitSubmission(subId, data) {
     lastSavedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   })
+}
+
+/**
+ * 구조화된 응답(섹션별) 초안 자동저장 — essay 타입의 saveSubmissionDraft에 대응.
+ * charCount는 섹션 합계로 다시 계산해 최상위에도 저장해둔다(대시보드가 매번 섹션을 다
+ * 훑지 않아도 되게).
+ * @param {string} subId
+ * @param {Record<string, {text:string, charCount:number, aiFlags:object}>} sections
+ */
+export async function saveSectionsDraft(subId, sections) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), {
+    sections,
+    charCount: sumSectionCharCounts(sections),
+    lastSavedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 구조화된 응답 최종 제출 (잠금) — essay 타입의 submitSubmission에 대응.
+ * 필수 섹션이 비어있는지 같은 검증은 호출부(StructuredReportEditor)에서 미리 한다.
+ * @param {string} subId
+ * @param {Record<string, {text:string, charCount:number, aiFlags:object}>} sections
+ */
+export async function submitSections(subId, sections) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), {
+    sections,
+    charCount: sumSectionCharCounts(sections),
+    status: 'submitted',
+    submittedAt: serverTimestamp(),
+    lastSavedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+}
+
+function sumSectionCharCounts(sections) {
+  return Object.values(sections || {}).reduce((sum, s) => sum + (s.charCount || 0), 0)
 }
 
 /**
@@ -271,51 +375,96 @@ export async function getSubmission(subId) {
 }
 
 // ─── 작성 로그 (리플레이용) ─────────────────────────────────────
+//
+// essay 타입은 이벤트에 sectionId가 없다 — 지금까지처럼 제출물 최상위 카운터를 올린다.
+// structured 타입은 이벤트마다 sectionId가 실려 온다 — 그 섹션의 카운터(sections.{id}.*)만
+// dot-path로 올린다. 한 배치 안에 여러 섹션 이벤트가 섞일 수 있어(학생이 짧은 시간에
+// 섹션을 오가며 입력) 섹션별로 개수를 모아 각각 increment한다.
+
+/** events에 sectionId가 하나라도 있으면 {sectionId: count} 맵을, 없으면 null을 돌려준다. */
+function countBySection(events) {
+  const counts = {}
+  let found = false
+  for (const e of events) {
+    if (e.sectionId) {
+      found = true
+      counts[e.sectionId] = (counts[e.sectionId] || 0) + 1
+    }
+  }
+  return found ? counts : null
+}
 
 /**
  * input 이벤트 배치 저장 + 누적 카운트 갱신
  * @param {string} subId
- * @param {Array<{t:number, value:string, selStart:number, inputType:string}>} events
+ * @param {Array<{t:number, value:string, selStart:number, inputType:string, sectionId?:string}>} events
  */
 export async function appendInputLogBatch(subId, events) {
   const batch = writeBatch(db)
   const logRef = doc(collection(db, 'essaySubmissions', subId, 'inputLogs'))
   batch.set(logRef, { events, createdAt: serverTimestamp() })
-  batch.update(doc(db, 'essaySubmissions', subId), {
-    inputEventCount: increment(events.length)
-  })
+
+  const subRef = doc(db, 'essaySubmissions', subId)
+  const bySection = countBySection(events)
+  if (bySection) {
+    const updates = {}
+    for (const [sectionId, count] of Object.entries(bySection)) {
+      updates[`sections.${sectionId}.inputEventCount`] = increment(count)
+    }
+    batch.update(subRef, updates)
+  } else {
+    batch.update(subRef, { inputEventCount: increment(events.length) })
+  }
   await batch.commit()
 }
 
 /**
  * keydown 이벤트 배치 저장(타이밍 전용, 값은 저장 안 함) + 누적 카운트 갱신
  * @param {string} subId
- * @param {Array<{t:number, k:string}>} events
+ * @param {Array<{t:number, k:string, sectionId?:string}>} events
  */
 export async function appendKeydownLogBatch(subId, events) {
   const batch = writeBatch(db)
   const logRef = doc(collection(db, 'essaySubmissions', subId, 'keydownLogs'))
   batch.set(logRef, { events, createdAt: serverTimestamp() })
-  batch.update(doc(db, 'essaySubmissions', subId), {
-    keydownCount: increment(events.length)
-  })
+
+  const subRef = doc(db, 'essaySubmissions', subId)
+  const bySection = countBySection(events)
+  if (bySection) {
+    const updates = {}
+    for (const [sectionId, count] of Object.entries(bySection)) {
+      updates[`sections.${sectionId}.keydownCount`] = increment(count)
+    }
+    batch.update(subRef, updates)
+  } else {
+    batch.update(subRef, { keydownCount: increment(events.length) })
+  }
   await batch.commit()
 }
 
 /**
  * 붙여넣기 이벤트 1건 저장 + 누적 카운트 갱신 (붙여넣기 자체는 막지 않음, 기록만)
  * @param {string} subId
- * @param {{t:number, text:string, charCount:number, cursorPos:number, resultingLength:number}} event
+ * @param {{t:number, text:string, charCount:number, cursorPos:number, resultingLength:number, sectionId?:string}} event
  */
 export async function addPasteLog(subId, event) {
   const truncatedText = (event.text || '').slice(0, 5000)
   const batch = writeBatch(db)
   const logRef = doc(collection(db, 'essaySubmissions', subId, 'pasteLogs'))
   batch.set(logRef, { ...event, text: truncatedText, createdAt: serverTimestamp() })
-  batch.update(doc(db, 'essaySubmissions', subId), {
-    pasteCount: increment(1),
-    pastedCharTotal: increment(event.charCount || 0)
-  })
+
+  const subRef = doc(db, 'essaySubmissions', subId)
+  if (event.sectionId) {
+    batch.update(subRef, {
+      [`sections.${event.sectionId}.pasteCount`]: increment(1),
+      [`sections.${event.sectionId}.pastedCharTotal`]: increment(event.charCount || 0)
+    })
+  } else {
+    batch.update(subRef, {
+      pasteCount: increment(1),
+      pastedCharTotal: increment(event.charCount || 0)
+    })
+  }
   await batch.commit()
 }
 

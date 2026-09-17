@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
 import { auth } from '../../firebase.js'
 import { useAuth } from '../../App.jsx'
-import { listAssignments } from '../../services/essay.js'
+import { listAssignments, deleteAssignment, countSubmissionsForAssignment } from '../../services/essay.js'
 
 const STATUS_LABEL = { open: '진행 중', closed: '마감' }
 
@@ -14,14 +14,28 @@ function formatDate(ts) {
 
 export default function EssayAdminHome() {
   const navigate = useNavigate()
-  const { user, userInfo, userRole } = useAuth()
+  const { user, userInfo } = useAuth()
   const [assignments, setAssignments] = useState([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    // super_admin은 전체, teacher는 본인이 만든 배정만 — firestore.rules와 짝을 이룬다.
-    listAssignments(userRole === 'teacher' ? user.uid : undefined).then(data => { setAssignments(data); setLoading(false) })
-  }, [user, userRole])
+  // 이 화면은 이제 teacher 전용이다(super_admin은 SuperAdminHome을 본다) — 본인이 만든
+  // 배정만 firestore.rules와 짝을 이뤄 필터링한다.
+  function reload() {
+    setLoading(true)
+    listAssignments(user.uid).then(data => { setAssignments(data); setLoading(false) })
+  }
+
+  useEffect(() => { reload() }, [user])
+
+  async function handleDelete(a) {
+    const count = await countSubmissionsForAssignment(a.id, user.uid)
+    const warn = count > 0
+      ? `\n\n주의: 이미 작성/제출된 학생 응답이 ${count}건 있습니다. 배정을 삭제해도 학생 응답 데이터 자체는 남지만, 이 목록과 대시보드에서는 더 이상 접근할 수 없게 됩니다.`
+      : ''
+    if (!window.confirm(`"${a.title || '(제목 없음)'}" 배정을 삭제하시겠습니까? 되돌릴 수 없습니다.${warn}`)) return
+    await deleteAssignment(a.id)
+    reload()
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -32,18 +46,16 @@ export default function EssayAdminHome() {
           </div>
           <div>
             <h1 className="text-base font-bold text-gray-900">서술형 수행평가 관리</h1>
-            <p className="text-xs text-gray-500">{userRole === 'super_admin' ? 'Super Admin' : '교사'}</p>
+            <p className="text-xs text-gray-500">교사</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {userRole === 'super_admin' && (
-            <button
-              onClick={() => navigate('/admin/teachers')}
-              className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded-lg px-3 py-1.5 hover:bg-purple-50 font-medium transition-colors"
-            >
-              🔑 교사 권한 관리
-            </button>
-          )}
+          <button
+            onClick={() => navigate('/admin/templates')}
+            className="text-xs text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-lg px-3 py-1.5 hover:bg-emerald-50 font-medium transition-colors"
+          >
+            📋 보고서 양식 관리
+          </button>
           <button
             onClick={() => navigate('/admin/passages')}
             className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-3 py-1.5 hover:bg-indigo-50 font-medium transition-colors"
@@ -82,24 +94,33 @@ export default function EssayAdminHome() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {assignments.map(a => (
-              <button
+              <div
                 key={a.id}
                 onClick={() => navigate(`/admin/assignments/${a.id}`)}
-                className="text-left bg-white rounded-2xl border-2 border-gray-200 hover:border-indigo-300 hover:shadow-md p-4 transition-all"
+                className="text-left bg-white rounded-2xl border-2 border-gray-200 hover:border-indigo-300 hover:shadow-md p-4 transition-all cursor-pointer"
               >
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="font-bold text-gray-800 text-sm">{a.title || '(제목 없음)'}</h3>
-                  <span className={`text-xs rounded-full px-2 py-0.5 border font-medium flex-shrink-0 ${
-                    a.status === 'closed' ? 'bg-gray-100 text-gray-500 border-gray-200' : 'bg-blue-100 text-blue-700 border-blue-200'
-                  }`}>
-                    {STATUS_LABEL[a.status] || a.status}
-                  </span>
+                <div className="flex items-start justify-between mb-2 gap-2">
+                  <h3 className="font-bold text-gray-800 text-sm flex-1 min-w-0 truncate">{a.title || '(제목 없음)'}</h3>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className={`text-xs rounded-full px-2 py-0.5 border font-medium ${
+                      a.status === 'closed' ? 'bg-gray-100 text-gray-500 border-gray-200' : 'bg-blue-100 text-blue-700 border-blue-200'
+                    }`}>
+                      {STATUS_LABEL[a.status] || a.status}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(a) }}
+                      title="배정 삭제"
+                      className="w-5 h-5 flex items-center justify-center rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-sm leading-none"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-gray-400">마감: {formatDate(a.dueAt)}</p>
                 {a.classroom?.courseName && (
                   <p className="text-xs text-emerald-600 mt-1.5">🎓 Classroom 게시됨 — {a.classroom.courseName}</p>
                 )}
-              </button>
+              </div>
             ))}
           </div>
         )}

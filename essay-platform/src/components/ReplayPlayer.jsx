@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { htmlToPlainText, sanitizeHtml } from '../utils/richText.js'
 
 function minMax(values) {
   let min = Infinity
@@ -77,16 +78,21 @@ export default function ReplayPlayer({ inputEvents, keydownEvents, pasteEvents, 
     return () => cancelAnimationFrame(raf)
   }, [playing, speed, tMax])
 
-  const currentText = useMemo(() => {
-    let text = ''
+  // ev.value는 essay 에디터가 textarea였을 땐 순수 텍스트, 지금은 서식이 담긴 HTML이다
+  // (과거 로그도 태그가 없을 뿐 그대로 통과하므로 하위호환된다). sanitizeHtml로 한 번 더
+  // 걸러서 그리는 이유는, 학생 계정이 devtools로 Firestore 문서에 직접 위험한 태그를
+  // 심어놨더라도 그게 여기(교사 화면)에서 실행되지 않게 하기 위해서다.
+  const currentHtml = useMemo(() => {
+    let html = ''
     for (const ev of inputEvents) {
       if (ev.t > currentT) break
-      text = ev.value
+      html = ev.value
     }
-    return text
+    return sanitizeHtml(html)
   }, [inputEvents, currentT])
 
-  const finalCharCount = inputEvents.length ? inputEvents[inputEvents.length - 1].value.length : 0
+  const finalPlainText = inputEvents.length ? htmlToPlainText(inputEvents[inputEvents.length - 1].value) : ''
+  const finalCharCount = finalPlainText.length
   const pastedCharTotal = pasteEvents.reduce((sum, e) => sum + (e.charCount || 0), 0)
   const pasteRatio = finalCharCount > 0 ? Math.round((pastedCharTotal / finalCharCount) * 100) : 0
 
@@ -120,10 +126,18 @@ export default function ReplayPlayer({ inputEvents, keydownEvents, pasteEvents, 
         </div>
       )}
 
-      {/* 재생 텍스트 박스 */}
-      <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 min-h-[220px] whitespace-pre-wrap text-[15px] leading-relaxed text-gray-800">
-        {currentText || <span className="text-gray-300">(아직 입력 없음)</span>}
-      </div>
+      {/* 재생 텍스트 박스 — 학생이 쓴 서식(굵게/기울임/목록 등)을 그대로 재생한다.
+          [&_ul]/[&_ol]은 EssayEditor.jsx와 같은 목록 스타일. */}
+      {currentHtml ? (
+        <div
+          className="rounded-2xl border border-gray-200 bg-white px-5 py-4 min-h-[220px] text-[15px] leading-relaxed text-gray-800 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+          dangerouslySetInnerHTML={{ __html: currentHtml }}
+        />
+      ) : (
+        <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 min-h-[220px] text-[15px] leading-relaxed text-gray-300">
+          (아직 입력 없음)
+        </div>
+      )}
 
       {/* 타임라인 */}
       <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">

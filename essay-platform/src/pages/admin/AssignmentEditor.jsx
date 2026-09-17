@@ -2,15 +2,19 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import { listPassages, getAssignment, createAssignment, updateAssignment } from '../../services/essay.js'
+import { listTemplates } from '../../services/reportTemplates.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
 
 export default function AssignmentEditor() {
   const navigate = useNavigate()
-  const { user, userRole } = useAuth()
+  const { user } = useAuth()
   const { assignmentId } = useParams()
   const isEdit = Boolean(assignmentId)
+  const [responseType, setResponseType] = useState('essay')
   const [passages, setPassages] = useState([])
   const [passageId, setPassageId] = useState('')
+  const [templates, setTemplates] = useState([])
+  const [templateId, setTemplateId] = useState('')
   const [title, setTitle] = useState('')
   const [dueAtStr, setDueAtStr] = useState('')
   const [wordLimit, setWordLimit] = useState('')
@@ -32,39 +36,45 @@ export default function AssignmentEditor() {
   useEffect(() => {
     async function load() {
       try {
-        const teacherUid = userRole === 'teacher' ? user.uid : undefined
-        const [list, assignment] = await Promise.all([
-          listPassages(teacherUid),
+        const [passageList, templateList, assignment] = await Promise.all([
+          listPassages(user.uid),
+          listTemplates(user.uid),
           isEdit ? getAssignment(assignmentId) : Promise.resolve(null)
         ])
-        // teacher는 본인이 만든 배정만 수정할 수 있다 — URL을 직접 알아도 남의 배정은
-        // 열리지 않게 화면에서도 막는다(저장 시도 시 firestore.rules가 어차피 막지만,
-        // 편집 가능한 것처럼 보이다 저장에서만 실패하는 건 혼란스럽다).
-        if (assignment && userRole === 'teacher' && assignment.createdBy !== user.uid) {
+        // 본인이 만든 배정만 수정할 수 있다 — URL을 직접 알아도 남의 배정은 열리지 않게
+        // 화면에서도 막는다(저장 시도 시 firestore.rules가 어차피 막지만, 편집 가능한 것처럼
+        // 보이다 저장에서만 실패하는 건 혼란스럽다).
+        if (assignment && assignment.createdBy !== user.uid) {
           setAccessDenied(true)
           return
         }
-        const available = isEdit ? list : list.filter(p => p.active)
-        setPassages(available)
+        const availablePassages = isEdit ? passageList : passageList.filter(p => p.active)
+        const availableTemplates = isEdit ? templateList : templateList.filter(t => t.active)
+        setPassages(availablePassages)
+        setTemplates(availableTemplates)
         if (assignment) {
           const dueDate = assignment.dueAt?.toDate?.() || null
+          setResponseType(assignment.responseType || 'essay')
           setPassageId(assignment.passageId || '')
+          setTemplateId(assignment.templateId || '')
           setTitle(assignment.title || '')
           setDueAtStr(dueDate ? [dueDate.getFullYear(), String(dueDate.getMonth() + 1).padStart(2, '0'), String(dueDate.getDate()).padStart(2, '0')].join('-') : '')
           setWordLimit(assignment.wordLimit ?? '')
           setStatus(assignment.status || 'open')
-        } else if (!isEdit && available.length) {
-          setPassageId(available[0].id)
+        } else if (!isEdit) {
+          if (availablePassages.length) setPassageId(availablePassages[0].id)
+          if (availableTemplates.length) setTemplateId(availableTemplates[0].id)
         }
       } finally {
         setLoading(false)
       }
     }
     load()
-  }, [assignmentId, isEdit, user, userRole])
+  }, [assignmentId, isEdit, user])
 
   async function handleSave() {
-    if (!passageId) { alert('지문을 선택해주세요.'); return }
+    if (responseType === 'essay' && !passageId) { alert('지문을 선택해주세요.'); return }
+    if (responseType === 'structured' && !templateId) { alert('보고서 양식을 선택해주세요.'); return }
     if (!title.trim()) { alert('배정 제목을 입력해주세요.'); return }
     setSaving(true)
     try {
@@ -79,7 +89,9 @@ export default function AssignmentEditor() {
         navigate(`/admin/assignments/${assignmentId}`)
       } else {
         const id = await createAssignment({
-          passageId,
+          responseType,
+          passageId: responseType === 'structured' ? (passageId || null) : passageId,
+          templateId: responseType === 'structured' ? templateId : null,
           title: title.trim(),
           dueAt,
           wordLimit: wordLimit ? Number(wordLimit) : null
@@ -174,11 +186,50 @@ export default function AssignmentEditor() {
         {!savedAssignment ? (
           <>
             <div>
-              <label className={labelClass}>지문 선택</label>
+              <label className={labelClass}>응답 유형</label>
+              <div className="flex gap-2">
+                {[
+                  { value: 'essay', label: '서술형 (지문 + 자유서술)' },
+                  { value: 'structured', label: '구조화된 보고서 (양식에 맞춰 항목별 작성)' }
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => !isEdit && setResponseType(opt.value)}
+                    disabled={isEdit}
+                    className={`flex-1 rounded-xl border px-3 py-2.5 text-xs font-medium text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      responseType === opt.value ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {isEdit && <p className="mt-1.5 text-xs text-gray-400">학생 작성 기록의 일관성을 위해 배정 후에는 응답 유형을 바꿀 수 없습니다.</p>}
+            </div>
+
+            {responseType === 'structured' && (
+              <div>
+                <label className={labelClass}>보고서 양식</label>
+                {templates.length === 0 ? (
+                  <p className="text-sm text-gray-400">활성화된 양식이 없습니다. 먼저 "보고서 양식 관리"에서 만들어주세요.</p>
+                ) : (
+                  <select className={inputClass} value={templateId} onChange={e => setTemplateId(e.target.value)} disabled={isEdit}>
+                    {templates.map(t => <option key={t.id} value={t.id}>{t.title} ({t.sections?.length || 0}개 섹션)</option>)}
+                  </select>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label className={labelClass}>
+                지문 선택{responseType === 'structured' && ' (선택, 참고 자료로만 보여줍니다)'}
+              </label>
               {passages.length === 0 ? (
-                <p className="text-sm text-gray-400">활성화된 지문이 없습니다. 먼저 지문을 등록해주세요.</p>
+                <p className="text-sm text-gray-400">활성화된 지문이 없습니다.{responseType === 'essay' && ' 먼저 지문을 등록해주세요.'}</p>
               ) : (
-                  <select className={inputClass} value={passageId} onChange={e => setPassageId(e.target.value)} disabled={isEdit}>
+                <select className={inputClass} value={passageId} onChange={e => setPassageId(e.target.value)} disabled={isEdit}>
+                  {responseType === 'structured' && <option value="">지문 없음</option>}
                   {passages.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                 </select>
               )}
@@ -195,10 +246,12 @@ export default function AssignmentEditor() {
               <input type="date" className={inputClass} value={dueAtStr} onChange={e => setDueAtStr(e.target.value)} />
             </div>
 
-            <div>
-              <label className={labelClass}>목표 분량 override (선택, 비우면 지문 기본값 사용)</label>
-              <input type="number" className={`${inputClass} max-w-[140px]`} value={wordLimit} onChange={e => setWordLimit(e.target.value)} placeholder="800" />
-            </div>
+            {responseType === 'essay' && (
+              <div>
+                <label className={labelClass}>목표 분량 override (선택, 비우면 지문 기본값 사용)</label>
+                <input type="number" className={`${inputClass} max-w-[140px]`} value={wordLimit} onChange={e => setWordLimit(e.target.value)} placeholder="800" />
+              </div>
+            )}
 
             {isEdit && (
               <div>
@@ -212,7 +265,7 @@ export default function AssignmentEditor() {
 
             <button
               onClick={handleSave}
-              disabled={saving || passages.length === 0}
+              disabled={saving || (responseType === 'essay' ? passages.length === 0 : templates.length === 0)}
               className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
             >
               {saving ? '저장 중...' : isEdit ? '변경 사항 저장' : '배정 저장'}

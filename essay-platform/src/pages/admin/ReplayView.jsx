@@ -1,22 +1,30 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getSubmission, getReplayLogs } from '../../services/essay.js'
+import { getAssignment, getSubmission, getReplayLogs } from '../../services/essay.js'
+import { getTemplate } from '../../services/reportTemplates.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
 
 export default function ReplayView() {
   const { assignmentId, uid } = useParams()
   const navigate = useNavigate()
   const [submission, setSubmission] = useState(null)
+  const [template, setTemplate] = useState(null)
   const [logs, setLogs] = useState(null)
+  const [sectionId, setSectionId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     const subId = `${assignmentId}__${uid}`
-    Promise.all([getSubmission(subId), getReplayLogs(subId)])
-      .then(([sub, replayLogs]) => {
+    Promise.all([getAssignment(assignmentId), getSubmission(subId), getReplayLogs(subId)])
+      .then(async ([a, sub, replayLogs]) => {
         setSubmission(sub)
         setLogs(replayLogs)
+        if (a?.responseType === 'structured' && a.templateId) {
+          const tpl = await getTemplate(a.templateId)
+          setTemplate(tpl)
+          if (tpl?.sections?.length) setSectionId(tpl.sections[0].id)
+        }
       })
       .catch(err => {
         // 다른 교사가 만든 배정의 제출물이면 firestore.rules가 여기서 막는다(권한 거부).
@@ -25,6 +33,23 @@ export default function ReplayView() {
       })
       .finally(() => setLoading(false))
   }, [assignmentId, uid])
+
+  // structured 제출물은 리플레이 로그 이벤트마다 sectionId가 실려 있다(services/essay.js) —
+  // 선택된 섹션의 이벤트만 걸러서 ReplayPlayer에 넘긴다. ReplayPlayer 자체는 필터링된
+  // 배열만 받으므로 변경할 필요가 없다.
+  const filteredLogs = useMemo(() => {
+    if (!logs) return null
+    if (!template || !sectionId) return logs
+    return {
+      inputEvents: logs.inputEvents.filter(e => e.sectionId === sectionId),
+      keydownEvents: logs.keydownEvents.filter(e => e.sectionId === sectionId),
+      pasteEvents: logs.pasteEvents.filter(e => e.sectionId === sectionId)
+    }
+  }, [logs, template, sectionId])
+
+  const aiFlags = template && sectionId
+    ? submission?.sections?.[sectionId]?.aiFlags
+    : submission?.aiFlags
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -50,12 +75,28 @@ export default function ReplayView() {
         ) : !submission ? (
           <div className="text-center py-16 text-gray-400">제출물을 찾을 수 없습니다.</div>
         ) : (
-          <ReplayPlayer
-            inputEvents={logs.inputEvents}
-            keydownEvents={logs.keydownEvents}
-            pasteEvents={logs.pasteEvents}
-            aiFlags={submission.aiFlags}
-          />
+          <>
+            {template?.sections?.length > 0 && (
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">섹션 선택</label>
+                <select
+                  value={sectionId}
+                  onChange={e => setSectionId(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white"
+                >
+                  {template.sections.map(sec => (
+                    <option key={sec.id} value={sec.id}>{sec.heading || sec.groupLabel || '섹션'}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <ReplayPlayer
+              inputEvents={filteredLogs.inputEvents}
+              keydownEvents={filteredLogs.keydownEvents}
+              pasteEvents={filteredLogs.pasteEvents}
+              aiFlags={aiFlags}
+            />
+          </>
         )}
       </main>
     </div>
