@@ -1,9 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { htmlToPlainText } from '../utils/richText.js'
 import { sanitizeAnswerHtml } from '../utils/sanitizeHtml.js'
 import { isImageFile, uploadAnswerImage } from '../services/storage.js'
-import MathComposerDialog from './MathComposerDialog.jsx'
-import { createMathExpression, createMathHtml, decodeMathExpression, insertLineBreakAfterMath, prepareMathForStorage, renderMathInElement } from '../utils/mathExpression.js'
+import { createMathHtml, decodeLatex, decodeMathExpression, insertLineBreakAfterMath, mathToLatex, prepareMathForStorage, renderMathInElement } from '../utils/mathExpression.js'
+
+// mathlive(전용 수식 편집 라이브러리)는 수식 버튼을 처음 누르기 전까지 아예 안 실리도록
+// 별도 청크로 lazy load한다 — MathComposerDialog.jsx만 이 패키지를 import한다.
+const MathComposerDialog = lazy(() => import('./MathComposerDialog.jsx'))
 
 const TOOLS = [
   { cmd: 'bold', label: '굵게', glyph: 'B', glyphClass: 'font-bold' },
@@ -69,7 +72,7 @@ export default function EssayEditor({
   const fileInputRef = useRef(null)
   const [uploading, setUploading] = useState(0)
   const [uploadError, setUploadError] = useState('')
-  const [mathDialog, setMathDialog] = useState(null) // { expression, mode, node? }
+  const [mathDialog, setMathDialog] = useState(null) // { latex, mode, node? }
   const savedRangeRef = useRef(null)
 
   // 블록(문단/이미지 단위) 재배치 — RichTextEditor.jsx의 ⋮⋮ 손잡이와 같은 방식.
@@ -173,14 +176,21 @@ export default function EssayEditor({
   function openMathDialog() {
     if (disabled) return
     saveSelection()
-    setMathDialog({ expression: createMathExpression(), mode: 'inline', node: null })
+    setMathDialog({ latex: '', mode: 'inline', node: null })
+  }
+
+  /** 노드의 data-math-format을 보고 신규(원본 LaTeX)/레거시(템플릿) 저장 형식을 구분해 읽는다. */
+  function readMathLatex(node) {
+    return node.getAttribute('data-math-format') === 'tex'
+      ? decodeLatex(node.getAttribute('data-math'))
+      : mathToLatex(decodeMathExpression(node.getAttribute('data-math')))
   }
 
   function openExistingMath(node) {
     if (disabled) return
     saveSelection()
     setMathDialog({
-      expression: decodeMathExpression(node.getAttribute('data-math')),
+      latex: readMathLatex(node),
       mode: node.getAttribute('data-math-mode') === 'block' ? 'block' : 'inline',
       node
     })
@@ -204,10 +214,10 @@ export default function EssayEditor({
     sel.addRange(range)
   }
 
-  function insertMath(expression, mode) {
+  function insertMath(latex, mode) {
     const el = editorRef.current
     if (!el || !mathDialog) return
-    const html = createMathHtml(expression, mode)
+    const html = createMathHtml(latex, mode)
     const template = document.createElement('template')
     template.innerHTML = html
     const mathNode = template.content.firstChild
@@ -313,10 +323,11 @@ export default function EssayEditor({
       if (node.matches('[data-math]')) {
         // KaTeX가 그려 넣은 마크업을 그대로 복사하지 않고, data-math에 담긴 식을 다시 읽어
         // 깨끗한 수식 노드를 새로 만든다 — 잘려나간 KaTeX 내부 span 조각이 섞여 들어오는 것을 막는다.
-        const expression = decodeMathExpression(node.getAttribute('data-math'))
+        // (레거시 형식이었다면 이 과정에서 자연스럽게 신규 LaTeX 형식으로 바뀐다.)
+        const latex = readMathLatex(node)
         const mode = node.getAttribute('data-math-mode') === 'block' ? 'block' : 'inline'
         const template = document.createElement('template')
-        template.innerHTML = createMathHtml(expression, mode)
+        template.innerHTML = createMathHtml(latex, mode)
         frag.appendChild(template.content.firstChild)
         return
       }
@@ -596,12 +607,18 @@ export default function EssayEditor({
         </span>
       </div>
       {mathDialog && (
-        <MathComposerDialog
-          initialExpression={mathDialog.expression}
-          initialMode={mathDialog.mode}
-          onCancel={() => { setMathDialog(null); editorRef.current?.focus() }}
-          onConfirm={insertMath}
-        />
+        <Suspense fallback={
+          <div className="fixed inset-0 z-[1400] flex items-center justify-center bg-slate-900/35">
+            <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-500 shadow-lg">수식 입력창 불러오는 중…</div>
+          </div>
+        }>
+          <MathComposerDialog
+            initialLatex={mathDialog.latex}
+            initialMode={mathDialog.mode}
+            onCancel={() => { setMathDialog(null); editorRef.current?.focus() }}
+            onConfirm={insertMath}
+          />
+        </Suspense>
       )}
     </div>
   )

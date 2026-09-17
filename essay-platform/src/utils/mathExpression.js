@@ -1,5 +1,7 @@
 import katex from 'katex'
 
+// ── 예전(템플릿 슬롯) 형식 — 지금은 더 이상 이 형식으로 새로 만들지 않지만, 이미 저장된
+// 답안에 남아있는 수식을 계속 정확히 읽고 그려야 하므로 디코딩/렌더링 경로는 그대로 둔다.
 export const MATH_TEMPLATES = [
   { id: 'plain', label: '기본 식', slots: [['main', '식']] },
   { id: 'fraction', label: '분수', slots: [['top', '분자'], ['bottom', '분모']] },
@@ -36,7 +38,7 @@ export function createMathExpression(template = 'plain') {
   return { template: selected.id, values: Object.fromEntries(selected.slots.map(([key]) => [key, ''])) }
 }
 
-/** 슬롯 값이 문자열이 아니라 "수식 속 수식"(중첩 식)인지 판별한다. */
+/** 슬롯 값이 문자열이 아니라 "수식 속 수식"(중첩 식)인지 판별한다(레거시 형식 전용). */
 export function isNestedExpression(value) {
   return Boolean(value) && typeof value === 'object' && typeof value.template === 'string'
 }
@@ -101,7 +103,7 @@ export function mathPlainLabel(expression) {
   }
 }
 
-function encode(expression) {
+function encodeLegacy(expression) {
   return btoa(unescape(encodeURIComponent(JSON.stringify(normalizeMathExpression(expression)))))
 }
 
@@ -111,26 +113,72 @@ export function decodeMathExpression(encoded) {
   } catch { return createMathExpression() }
 }
 
-export function createMathHtml(expression, mode = 'inline') {
+// ── 새 형식 — MathLive가 만들어내는 원본 LaTeX를 그대로 저장한다. 템플릿/슬롯 구조가
+// 없어서 자유로운 중첩·복잡한 수식(예: 근의 공식)도 그대로 표현할 수 있다.
+export function encodeLatex(latex) {
+  return btoa(unescape(encodeURIComponent(String(latex || ''))))
+}
+
+export function decodeLatex(encoded) {
+  try {
+    return decodeURIComponent(escape(atob(encoded)))
+  } catch {
+    return ''
+  }
+}
+
+const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, ch => HTML_ESCAPE_MAP[ch])
+}
+
+function shortenLabel(label) {
+  return label.length > 60 ? `${label.slice(0, 60)}…` : label
+}
+
+/**
+ * 수식 wrapper span의 HTML을 만든다. `input`이 문자열이면 새 형식(원본 LaTeX)으로,
+ * `{template, values}` 객체면 레거시 형식으로 인코딩한다 — 저장 폭에는 두 형식이 섞여
+ * 있을 수 있으므로 렌더러(renderMathInElement)는 항상 data-math-format으로 구분해 읽는다.
+ * textContent·aria-label에 들어가는 값은 사용자가 직접 입력한 문자열이라(수식 슬롯이든
+ * MathLive든) HTML로 그대로 삽입하기 전에 반드시 이스케이프한다.
+ */
+export function createMathHtml(input, mode = 'inline') {
   const safeMode = mode === 'block' ? 'block' : 'inline'
-  const label = mathPlainLabel(expression)
-  return `<span class="student-math student-math--${safeMode}" data-math="${encode(expression)}" data-math-mode="${safeMode}" contenteditable="false" role="math" tabindex="0" aria-label="수식: ${label.replace(/"/g, '')}">${label}</span>`
+  const isTex = typeof input === 'string'
+  const payload = isTex ? encodeLatex(input) : encodeLegacy(input)
+  const formatAttr = isTex ? ' data-math-format="tex"' : ''
+  const rawLabel = isTex ? input : mathPlainLabel(input)
+  const ariaLabel = escapeHtml(`수식: ${shortenLabel(rawLabel)}`)
+  return `<span class="student-math student-math--${safeMode}"${formatAttr} data-math="${payload}" data-math-mode="${safeMode}" contenteditable="false" role="math" tabindex="0" aria-label="${ariaLabel}">${escapeHtml(rawLabel)}</span>`
 }
 
 export function prepareMathForStorage(root) {
   root?.querySelectorAll?.('[data-math]').forEach(node => {
-    const expression = decodeMathExpression(node.getAttribute('data-math'))
-    node.textContent = mathPlainLabel(expression)
+    if (node.getAttribute('data-math-format') === 'tex') {
+      node.textContent = decodeLatex(node.getAttribute('data-math'))
+    } else {
+      node.textContent = mathPlainLabel(decodeMathExpression(node.getAttribute('data-math')))
+    }
   })
 }
 
 export function renderMathInElement(root) {
   root?.querySelectorAll?.('[data-math]').forEach(node => {
-    const expression = decodeMathExpression(node.getAttribute('data-math'))
     const mode = node.getAttribute('data-math-mode') === 'block' ? 'block' : 'inline'
     node.classList.add('student-math', `student-math--${mode}`)
-    node.setAttribute('aria-label', `수식: ${mathPlainLabel(expression)}`)
-    katex.render(mathToLatex(expression), node, { throwOnError: false, displayMode: mode === 'block' })
+
+    let latex, label
+    if (node.getAttribute('data-math-format') === 'tex') {
+      latex = decodeLatex(node.getAttribute('data-math'))
+      label = latex
+    } else {
+      const expression = decodeMathExpression(node.getAttribute('data-math'))
+      latex = mathToLatex(expression)
+      label = mathPlainLabel(expression)
+    }
+    node.setAttribute('aria-label', `수식: ${shortenLabel(label)}`)
+    katex.render(latex, node, { throwOnError: false, displayMode: mode === 'block' })
   })
 }
 
@@ -152,7 +200,7 @@ export function insertLineBreakAfterMath(root) {
 
   const breakNode = document.createElement('br')
   // br 다음에 실제 텍스트 노드가 있어야 Chromium이 새 줄에서의 캐럿을 안정적으로 유지한다.
-  const caretNode = document.createTextNode('\u200B')
+  const caretNode = document.createTextNode('​')
   previous.after(breakNode, caretNode)
   const nextRange = document.createRange()
   nextRange.setStart(caretNode, 1)

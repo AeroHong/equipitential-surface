@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createMathExpression, createMathHtml, decodeMathExpression, insertLineBreakAfterMath, mathPlainLabel, mathToLatex, normalizeMathExpression } from './mathExpression.js'
+import { createMathExpression, createMathHtml, decodeLatex, decodeMathExpression, encodeLatex, insertLineBreakAfterMath, mathPlainLabel, mathToLatex, normalizeMathExpression, renderMathInElement } from './mathExpression.js'
 import { sanitizeAnswerHtml } from './sanitizeHtml.js'
 import { htmlToPlainText } from './richText.js'
 
@@ -63,5 +63,57 @@ describe('student math expressions', () => {
 
     const encoded = createMathHtml(outer).match(/data-math="([^"]+)"/)?.[1]
     expect(decodeMathExpression(encoded)).toEqual(normalizeMathExpression(outer))
+  })
+
+  // ── MathLive 도입 이후: 원본 LaTeX를 그대로 저장하는 신규 형식 ──────────────
+  it('round-trips a free-form LaTeX formula (new format) without going through the legacy template', () => {
+    const latex = 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}'
+    const html = createMathHtml(latex, 'block')
+    const encoded = html.match(/data-math="([^"]+)"/)?.[1]
+
+    expect(html).toContain('data-math-format="tex"')
+    expect(html).toContain('data-math-mode="block"')
+    expect(decodeLatex(encoded)).toBe(latex)
+    expect(decodeLatex(encodeLatex(latex))).toBe(latex)
+  })
+
+  it('renders a complex new-format formula (quadratic formula) through KaTeX without throwing', () => {
+    const latex = 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}'
+    const root = document.createElement('div')
+    root.innerHTML = createMathHtml(latex, 'block')
+    renderMathInElement(root)
+
+    const node = root.querySelector('[data-math]')
+    expect(node.querySelector('.katex')).not.toBeNull()
+    expect(node.querySelector('.katex-error')).toBeNull()
+  })
+
+  it('renders legacy and new-format formulas correctly when mixed in the same document', () => {
+    const root = document.createElement('div')
+    root.innerHTML = createMathHtml(createMathExpression('sqrt')) + createMathHtml('x^2+1')
+    renderMathInElement(root)
+
+    const nodes = root.querySelectorAll('[data-math]')
+    expect(nodes).toHaveLength(2)
+    expect([...nodes].every(n => n.querySelector('.katex'))).toBe(true)
+  })
+
+  it('HTML-escapes user-typed content so it cannot break out of the stored markup (XSS safety)', () => {
+    const malicious = '<img src=x onerror=alert(1)>'
+    const legacyHtml = createMathHtml({ template: 'plain', values: { main: malicious } })
+    const newHtml = createMathHtml(malicious)
+
+    // 실제 위험은 <img>가 "요소"로 만들어지는지다(속성값 안의 <, > 글자 자체는 HTML
+    // 문법상 안전하다 — 따옴표를 깨고 나올 수 있는지가 핵심이므로 DOM으로 파싱해 확인한다).
+    for (const html of [legacyHtml, newHtml, sanitizeAnswerHtml(legacyHtml), sanitizeAnswerHtml(newHtml)]) {
+      const root = document.createElement('div')
+      root.innerHTML = html
+      expect(root.querySelector('img')).toBeNull()
+    }
+  })
+
+  it('keeps data-math-format on the new format through answer sanitization', () => {
+    const safe = sanitizeAnswerHtml(createMathHtml('x^2', 'inline'))
+    expect(safe).toContain('data-math-format="tex"')
   })
 })
