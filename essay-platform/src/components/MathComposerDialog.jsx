@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { MATH_TEMPLATES, createMathExpression, normalizeMathExpression } from '../utils/mathExpression.js'
+import katex from 'katex'
+import { MATH_TEMPLATES, createMathExpression, isNestedExpression, mathToLatex, normalizeMathExpression } from '../utils/mathExpression.js'
 
 const SYMBOLS = ['+', '−', '×', '÷', '±', '=', '≠', '≤', '≥', '≈', 'x', 'y', 'z', 'a', 'b', 'n', 'α', 'β', 'γ', 'θ', 'π', 'Δ', '∞', '∈', '∉', '⊂', '∪', '∩', '→', '°']
 
@@ -28,6 +29,7 @@ export default function MathComposerDialog({ initialExpression, initialMode = 'i
   const [expression, setExpression] = useState(() => normalizeMathExpression(initialExpression || createMathExpression()))
   const [mode, setMode] = useState(initialMode)
   const [activeSlot, setActiveSlot] = useState(null)
+  const [nestedSlot, setNestedSlot] = useState(null) // 지금 "수식 속 수식"을 편집 중인 슬롯 key
   const inputRefs = useRef({})
   const currentTemplate = useMemo(() => MATH_TEMPLATES.find(t => t.id === expression.template), [expression.template])
   const firstSlot = currentTemplate.slots[0][0]
@@ -38,10 +40,12 @@ export default function MathComposerDialog({ initialExpression, initialMode = 'i
   }, [firstSlot])
 
   useEffect(() => {
-    const close = e => { if (e.key === 'Escape') onCancel() }
+    // 중첩 수식 편집 창이 떠 있을 땐 Escape가 그 창만 닫아야 한다 — 그대로 두면 바깥 창의
+    // 리스너도 같이 반응해서 두 창이 한 번에 닫혀버린다.
+    const close = e => { if (e.key === 'Escape' && !nestedSlot) onCancel() }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
-  }, [onCancel])
+  }, [onCancel, nestedSlot])
 
   function chooseTemplate(template) {
     setExpression(createMathExpression(template))
@@ -65,16 +69,37 @@ export default function MathComposerDialog({ initialExpression, initialMode = 'i
   }
   function slot(key, width = 'w-20', size = 'text-lg') {
     const label = currentTemplate.slots.find(([slotKey]) => slotKey === key)?.[1] || key
-    const filled = Boolean(expression.values[key])
-    return <input
-      ref={el => { inputRefs.current[key] = el }}
-      value={expression.values[key]}
-      onFocus={() => setActiveSlot(key)}
-      onChange={e => setValue(key, e.target.value)}
-      onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }}
-      aria-label={label}
-      className={`${width} h-7 min-w-0 rounded-sm px-1 text-center ${size} outline-none transition-colors ${filled ? 'border-b border-indigo-200 bg-transparent focus:border-indigo-500' : 'border border-dotted border-indigo-400 bg-white/70 focus:border-solid focus:border-indigo-500'}`}
-    />
+    const value = expression.values[key]
+
+    // 이 칸에 이미 "수식 속 수식"이 들어 있으면 입력칸 대신 렌더링된 미리보기를 보여주고,
+    // 클릭하면 중첩 편집창을 다시 연다.
+    if (isNestedExpression(value)) {
+      const preview = katex.renderToString(mathToLatex(value), { throwOnError: false })
+      return <span className={`relative inline-flex ${width} h-7 min-w-0 items-center justify-center gap-1 rounded-sm border border-indigo-300 bg-indigo-50/70 px-1`}>
+        <button type="button" onClick={() => setNestedSlot(key)} aria-label={`${label} 수식 편집`} className="max-w-full overflow-hidden" dangerouslySetInnerHTML={{ __html: preview }} />
+        <button type="button" onClick={() => setValue(key, '')} aria-label={`${label} 수식 지우기`} className="flex-none text-xs leading-none text-slate-400 hover:text-red-500">×</button>
+      </span>
+    }
+
+    const filled = Boolean(value)
+    return <span className="relative inline-flex items-center gap-0.5">
+      <input
+        ref={el => { inputRefs.current[key] = el }}
+        value={value}
+        onFocus={() => setActiveSlot(key)}
+        onChange={e => setValue(key, e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }}
+        aria-label={label}
+        className={`${width} h-7 min-w-0 rounded-sm px-1 text-center ${size} outline-none transition-colors ${filled ? 'border-b border-indigo-200 bg-transparent focus:border-indigo-500' : 'border border-dotted border-indigo-400 bg-white/70 focus:border-solid focus:border-indigo-500'}`}
+      />
+      <button
+        type="button"
+        onClick={() => setNestedSlot(key)}
+        title={`${label} 칸에 수식 삽입`}
+        aria-label={`${label} 칸에 수식 삽입`}
+        className="flex h-4 w-4 flex-none items-center justify-center rounded-full border border-indigo-200 text-[9px] font-serif italic leading-none text-indigo-400 hover:border-indigo-400 hover:text-indigo-600"
+      >ƒ</button>
+    </span>
   }
   function expressionField() {
     switch (expression.template) {
@@ -104,5 +129,13 @@ export default function MathComposerDialog({ initialExpression, initialMode = 'i
       <div className="mb-5 flex min-h-36 items-center justify-center overflow-x-auto rounded-xl border border-indigo-100 bg-indigo-50/40 px-5 py-6 text-slate-800">{expressionField()}</div>
       <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="px-3 py-2 text-sm text-slate-500">취소</button><button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">수식 넣기</button></div>
     </form>
+    {nestedSlot && (
+      <MathComposerDialog
+        initialExpression={isNestedExpression(expression.values[nestedSlot]) ? expression.values[nestedSlot] : createMathExpression()}
+        initialMode="inline"
+        onCancel={() => setNestedSlot(null)}
+        onConfirm={nestedExpression => { setValue(nestedSlot, nestedExpression); setNestedSlot(null) }}
+      />
+    )}
   </div>
 }

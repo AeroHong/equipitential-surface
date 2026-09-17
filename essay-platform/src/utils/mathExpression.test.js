@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createMathExpression, createMathHtml, decodeMathExpression, insertLineBreakAfterMath, mathPlainLabel, mathToLatex } from './mathExpression.js'
+import { createMathExpression, createMathHtml, decodeMathExpression, insertLineBreakAfterMath, mathPlainLabel, mathToLatex, normalizeMathExpression } from './mathExpression.js'
 import { sanitizeAnswerHtml } from './sanitizeHtml.js'
 import { htmlToPlainText } from './richText.js'
 
@@ -52,5 +52,16 @@ describe('student math expressions', () => {
     expect(htmlToPlainText(root.innerHTML)).toBe('¤')
     expect(selection.anchorNode.textContent).toBe('\u200B')
     root.remove()
+  })
+
+  it('supports a formula nested inside another formula slot', () => {
+    const nested = { template: 'fraction', values: { top: '1', bottom: '2' } }
+    const outer = { template: 'power', values: { base: 'x', exponent: nested } }
+
+    expect(mathToLatex(outer)).toBe('{x}^{\\frac{1}{2}}')
+    expect(mathPlainLabel(outer)).toBe('x^(1)/(2)')
+
+    const encoded = createMathHtml(outer).match(/data-math="([^"]+)"/)?.[1]
+    expect(decodeMathExpression(encoded)).toEqual(normalizeMathExpression(outer))
   })
 })

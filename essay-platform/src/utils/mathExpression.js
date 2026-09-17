@@ -36,11 +36,19 @@ export function createMathExpression(template = 'plain') {
   return { template: selected.id, values: Object.fromEntries(selected.slots.map(([key]) => [key, ''])) }
 }
 
+/** 슬롯 값이 문자열이 아니라 "수식 속 수식"(중첩 식)인지 판별한다. */
+export function isNestedExpression(value) {
+  return Boolean(value) && typeof value === 'object' && typeof value.template === 'string'
+}
+
 export function normalizeMathExpression(expression) {
   const selected = templateById[expression?.template] || templateById.plain
   return {
     template: selected.id,
-    values: Object.fromEntries(selected.slots.map(([key]) => [key, String(expression?.values?.[key] || '')]))
+    values: Object.fromEntries(selected.slots.map(([key]) => {
+      const raw = expression?.values?.[key]
+      return [key, isNestedExpression(raw) ? normalizeMathExpression(raw) : String(raw || '')]
+    }))
   }
 }
 
@@ -48,7 +56,11 @@ export function mathToLatex(expression) {
   const { template, values } = normalizeMathExpression(expression)
   // 빈 칸도 KaTeX가 항상 렌더링할 수 있는 작은 사각형으로 보인다. 비어 있는 수식을
   // 잠시 저장해도 리플레이에서 오류 메시지가 노출되지 않는다.
-  const v = key => texValue(values[key]) || '\\square'
+  const v = key => {
+    const raw = values[key]
+    if (isNestedExpression(raw)) return mathToLatex(raw)
+    return texValue(raw) || '\\square'
+  }
   switch (template) {
     case 'fraction': return `\\frac{${v('top')}}{${v('bottom')}}`
     case 'power': return `{${v('base')}}^{${v('exponent')}}`
@@ -69,7 +81,11 @@ export function mathToLatex(expression) {
 
 export function mathPlainLabel(expression) {
   const { template, values } = normalizeMathExpression(expression)
-  const text = key => values[key] || '□'
+  const text = key => {
+    const raw = values[key]
+    if (isNestedExpression(raw)) return mathPlainLabel(raw)
+    return raw || '□'
+  }
   switch (template) {
     case 'fraction': return `(${text('top')})/(${text('bottom')})`
     case 'power': return `${text('base')}^${text('exponent')}`

@@ -270,10 +270,22 @@ export default function EssayEditor({
     }
 
     const el = editorRef.current
+    const html = e.clipboardData?.getData('text/html') || ''
     const pasted = e.clipboardData?.getData('text/plain') || ''
     const sel = window.getSelection()
     const selectedLen = sel && !sel.isCollapsed ? sel.toString().length : 0
     const beforeLen = htmlToPlainText(el?.innerHTML).length
+
+    // 수식(KaTeX)이 포함된 영역을 복사하면 브라우저가 만드는 text/plain에는 화면에 보이지
+    // 않는 접근성용 MathML 텍스트까지 섞여 들어와 글자가 뒤섞인 것처럼 보인다("이상한 버그").
+    // text/html에 우리 수식 wrapper(data-math)가 있으면 그 인코딩된 식을 그대로 다시 읽어
+    // 새 수식 노드로 복원하고, 그 외 텍스트만 평문으로 붙여넣는다.
+    if (/\sdata-math=/.test(html)) {
+      e.preventDefault()
+      pasteWithMath(html)
+      return
+    }
+
     onLogPaste?.({
       text: pasted,
       charCount: pasted.length,
@@ -282,6 +294,58 @@ export default function EssayEditor({
     })
     e.preventDefault()
     document.execCommand('insertText', false, pasted)
+    commit('insertFromPaste')
+  }
+
+  function pasteWithMath(html) {
+    const el = editorRef.current
+    if (!el) return
+    const container = document.createElement('div')
+    container.innerHTML = html
+    const frag = document.createDocumentFragment()
+
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.textContent) frag.appendChild(document.createTextNode(node.textContent))
+        return
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return
+      if (node.matches('[data-math]')) {
+        // KaTeX가 그려 넣은 마크업을 그대로 복사하지 않고, data-math에 담긴 식을 다시 읽어
+        // 깨끗한 수식 노드를 새로 만든다 — 잘려나간 KaTeX 내부 span 조각이 섞여 들어오는 것을 막는다.
+        const expression = decodeMathExpression(node.getAttribute('data-math'))
+        const mode = node.getAttribute('data-math-mode') === 'block' ? 'block' : 'inline'
+        const template = document.createElement('template')
+        template.innerHTML = createMathHtml(expression, mode)
+        frag.appendChild(template.content.firstChild)
+        return
+      }
+      if (node.tagName === 'BR') { frag.appendChild(document.createElement('br')); return }
+      node.childNodes.forEach(walk)
+      if (/^(DIV|P|LI)$/.test(node.tagName)) frag.appendChild(document.createTextNode('\n'))
+    }
+    container.childNodes.forEach(walk)
+
+    const lastNode = frag.lastChild
+    const sel = window.getSelection()
+    const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+    if (range && el.contains(range.startContainer)) {
+      range.deleteContents()
+      range.insertNode(frag)
+    } else {
+      el.appendChild(frag)
+    }
+
+    renderMathInElement(el)
+    if (lastNode?.nodeType === Node.ELEMENT_NODE && lastNode.matches('[data-math]')) {
+      placeCaretAfter(lastNode)
+    } else if (lastNode) {
+      const r = document.createRange()
+      r.setStart(lastNode, lastNode.textContent?.length || 0)
+      r.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(r)
+    }
     commit('insertFromPaste')
   }
 
