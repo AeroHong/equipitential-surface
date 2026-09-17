@@ -1,6 +1,7 @@
 import React from 'react'
 import EssayEditor from '../../components/EssayEditor.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
+import { linkifyText } from '../../utils/linkifyText.js'
 
 function scrollToSection(id) {
   document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -28,7 +29,10 @@ export default function StructuredReportEditor({ template, sections, onChange, d
     // 높이 그대로 렌더링한 뒤 넘치는 부분은 부모 칸 스크롤로 해결하게 한다.
     <div className="flex-shrink-0">
       {template.description && (
-        <p className="text-sm text-gray-500 mb-4 whitespace-pre-wrap">{template.description}</p>
+        <p
+          className="text-sm text-gray-500 mb-4 whitespace-pre-wrap"
+          dangerouslySetInnerHTML={{ __html: linkifyText(template.description) }}
+        />
       )}
 
       {/* 진행 상황 칩 — 초록(작성됨)/회색(미작성), 클릭하면 그 섹션으로 스크롤 */}

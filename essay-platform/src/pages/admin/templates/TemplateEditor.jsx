@@ -140,6 +140,9 @@ export default function TemplateEditor() {
         <div>
           <label className={labelClass}>양식 설명 (선택, 학생 화면 상단에 표시)</label>
           <textarea className={`${inputClass} resize-none`} rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="이 보고서 양식에 대한 간단한 안내" />
+          <p className="mt-1 text-xs text-gray-400">
+            링크를 넣으려면 URL을 그대로 쓰거나, [설명 글자](https://주소) 형식으로 써서 원하는 글자에 링크를 걸 수 있습니다.
+          </p>
         </div>
 
         <div>
