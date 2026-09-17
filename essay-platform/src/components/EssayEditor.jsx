@@ -134,8 +134,19 @@ export default function EssayEditor({
 
   function saveSelection() {
     const sel = window.getSelection()
-    const range = sel?.rangeCount && editorRef.current?.contains(sel.getRangeAt(0).startContainer)
-      ? sel.getRangeAt(0).cloneRange() : null
+    if (sel?.rangeCount && editorRef.current?.contains(sel.getRangeAt(0).startContainer)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange()
+      return
+    }
+    // 본문을 한 번도 클릭하지 않은 채(예: 페이지를 열자마자) 툴바의 √ 버튼부터 누르면
+    // 살릴 선택 영역이 없다 — 이때 savedRangeRef를 null로 두면 나중에 insertMath가
+    // execCommand('insertHTML', ...)를 캐럿 없이 호출하게 되어 조용히 아무 일도 안
+    // 일어난다(브라우저가 삽입 지점을 못 찾음). 편집 영역 맨 끝을 기본 삽입 위치로 삼는다.
+    const el = editorRef.current
+    if (!el) { savedRangeRef.current = null; return }
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
     savedRangeRef.current = range
   }
 
