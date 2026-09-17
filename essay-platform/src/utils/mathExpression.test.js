@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createMathExpression, createMathHtml, decodeMathExpression, mathPlainLabel, mathToLatex } from './mathExpression.js'
+import { createMathExpression, createMathHtml, decodeMathExpression, insertLineBreakAfterMath, mathPlainLabel, mathToLatex } from './mathExpression.js'
 import { sanitizeAnswerHtml } from './sanitizeHtml.js'
 import { htmlToPlainText } from './richText.js'
 
@@ -31,5 +31,26 @@ describe('student math expressions', () => {
     expect(htmlToPlainText(html)).toBe('풀이: ¤ 입니다.')
     expect(htmlToPlainText(html)).toHaveLength(10)
     expect(mathPlainLabel({ template: 'power', values: { base: 'x', exponent: '2' } })).toBe('x^2')
+  })
+
+  it('adds a line break after a formula without cloning the formula node', () => {
+    const root = document.createElement('div')
+    root.contentEditable = 'true'
+    root.innerHTML = createMathHtml({ template: 'power', values: { base: 'A', exponent: '2' } })
+    const math = root.querySelector('[data-math]')
+    document.body.append(root)
+    const range = document.createRange()
+    range.setStartAfter(math)
+    range.collapse(true)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    expect(insertLineBreakAfterMath(root)).toBe(true)
+    expect(root.querySelectorAll('[data-math]')).toHaveLength(1)
+    expect(root.querySelector('br')).not.toBeNull()
+    expect(htmlToPlainText(root.innerHTML)).toBe('¤')
+    expect(selection.anchorNode.textContent).toBe('\u200B')
+    root.remove()
   })
 })

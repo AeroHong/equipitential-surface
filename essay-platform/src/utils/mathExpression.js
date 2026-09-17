@@ -117,3 +117,31 @@ export function renderMathInElement(root) {
     katex.render(mathToLatex(expression), node, { throwOnError: false, displayMode: mode === 'block' })
   })
 }
+
+/** Chrome이 contenteditable=false 수식 뒤 Enter에서 wrapper를 복제하지 않게 줄바꿈을 직접 만든다. */
+export function insertLineBreakAfterMath(root) {
+  const selection = window.getSelection()
+  if (!root || !selection?.rangeCount) return false
+  const range = selection.getRangeAt(0)
+  if (!range.collapsed || !root.contains(range.startContainer)) return false
+
+  let previous
+  if (range.startContainer.nodeType === Node.TEXT_NODE) {
+    if (range.startOffset !== 0) return false
+    previous = range.startContainer.previousSibling
+  } else {
+    previous = range.startContainer.childNodes[range.startOffset - 1]
+  }
+  if (!(previous instanceof Element) || !previous.matches('[data-math]')) return false
+
+  const breakNode = document.createElement('br')
+  // br 다음에 실제 텍스트 노드가 있어야 Chromium이 새 줄에서의 캐럿을 안정적으로 유지한다.
+  const caretNode = document.createTextNode('\u200B')
+  previous.after(breakNode, caretNode)
+  const nextRange = document.createRange()
+  nextRange.setStart(caretNode, 1)
+  nextRange.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(nextRange)
+  return true
+}

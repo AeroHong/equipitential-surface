@@ -3,7 +3,7 @@ import { htmlToPlainText } from '../utils/richText.js'
 import { sanitizeAnswerHtml } from '../utils/sanitizeHtml.js'
 import { isImageFile, uploadAnswerImage } from '../services/storage.js'
 import MathComposerDialog from './MathComposerDialog.jsx'
-import { createMathExpression, createMathHtml, decodeMathExpression, prepareMathForStorage, renderMathInElement } from '../utils/mathExpression.js'
+import { createMathExpression, createMathHtml, decodeMathExpression, insertLineBreakAfterMath, prepareMathForStorage, renderMathInElement } from '../utils/mathExpression.js'
 
 const TOOLS = [
   { cmd: 'bold', label: '굵게', glyph: 'B', glyphClass: 'font-bold' },
@@ -124,12 +124,14 @@ export default function EssayEditor({
       openMathDialog()
       return
     }
-    // TODO(알려진 버그, 아직 미수정): 캐럿이 수식(span[data-math], contenteditable="false")
-    // 바로 옆에 있을 때 Enter를 누르면 크롬이 그 블록을 통째로 복제해버린다(원자적
-    // contenteditable=false 요소 옆 줄바꿈에서 흔한 브라우저 동작) — 그 뒤에 입력한
-    // 글자도 사라진다. 재현: 수식 삽입 → 바로 뒤에서 Enter → 아무 글자나 입력.
-    // 고치려면 이 지점에서 Enter를 가로채 캐럿이 수식과 인접한지 직접 판별하고, 기본
-    // 동작 대신 새 줄을 수동으로 만들어야 한다.
+    // Chromium은 contenteditable=false 수식 바로 뒤 Enter에서 수식 wrapper를 복제한다.
+    // 이 경우만 기본 줄바꿈을 막고, 수식 하나를 유지한 채 새 줄과 캐럿을 직접 만든다.
+    if (e.key === 'Enter' && insertLineBreakAfterMath(editorRef.current)) {
+      e.preventDefault()
+      commit('insertLineBreak')
+      onLogKeydown?.('enter')
+      return
+    }
     let k = 'other'
     if (e.key === 'Backspace' || e.key === 'Delete') k = 'backspace'
     else if (e.key === 'Enter') k = 'enter'
