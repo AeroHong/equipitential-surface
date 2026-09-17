@@ -33,6 +33,15 @@ export default function MathComposerDialog({ initialExpression, initialMode = 'i
   const inputRefs = useRef({})
   const currentTemplate = useMemo(() => MATH_TEMPLATES.find(t => t.id === expression.template), [expression.template])
   const firstSlot = currentTemplate.slots[0][0]
+  // 칸에 타이핑할 때마다 실제 KaTeX로 그린 결과를 바로 보여준다 — 빈 칸은 mathToLatex가
+  // 작은 사각형(\square)으로 채워주므로 다 안 채워도 항상 렌더링된다.
+  const livePreview = useMemo(() => {
+    try {
+      return katex.renderToString(mathToLatex(expression), { throwOnError: false, displayMode: mode === 'block' })
+    } catch {
+      return ''
+    }
+  }, [expression, mode])
 
   useEffect(() => {
     const timer = setTimeout(() => inputRefs.current[firstSlot]?.focus(), 0)
@@ -125,6 +134,9 @@ export default function MathComposerDialog({ initialExpression, initialMode = 'i
         {MATH_TEMPLATES.map(template => <button key={template.id} type="button" title={template.label} aria-label={template.label} onClick={() => chooseTemplate(template.id)} className={`flex h-10 w-11 flex-none items-center justify-center rounded-lg border ${expression.template === template.id ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'}`}><TemplateIcon template={template.id} /></button>)}
         <span className="my-1 w-px flex-none bg-slate-200" />
         {SYMBOLS.map(symbol => <button key={symbol} type="button" onClick={() => insertSymbol(symbol)} className="h-10 min-w-10 flex-none rounded-lg border border-slate-200 bg-white px-1 text-base text-slate-700 hover:border-indigo-300 hover:bg-indigo-50">{symbol}</button>)}
+      </div>
+      <div className="mb-3 flex min-h-14 items-center justify-center overflow-x-auto rounded-xl border border-slate-200 bg-white px-4 py-3" aria-label="실시간 수식 미리보기">
+        <span className="text-slate-900" dangerouslySetInnerHTML={{ __html: livePreview }} />
       </div>
       <div className="mb-5 flex min-h-36 items-center justify-center overflow-x-auto rounded-xl border border-indigo-100 bg-indigo-50/40 px-5 py-6 text-slate-800">{expressionField()}</div>
       <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="px-3 py-2 text-sm text-slate-500">취소</button><button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">수식 넣기</button></div>
