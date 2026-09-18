@@ -5,6 +5,12 @@ import { listPassages, getAssignment, createAssignment, updateAssignment } from 
 import { listTemplates } from '../../services/reportTemplates.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
 
+/** <input type="datetime-local">의 min 속성용 — 지금 이 순간을 로컬 시간대 "YYYY-MM-DDTHH:mm"로. */
+function nowForDatetimeLocal() {
+  const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+  return d.toISOString().slice(0, 16)
+}
+
 export default function AssignmentEditor() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -23,13 +29,15 @@ export default function AssignmentEditor() {
   const [loading, setLoading] = useState(isEdit)
   const [accessDenied, setAccessDenied] = useState(false)
 
-  // 저장 완료 후 상태
-  const [savedAssignment, setSavedAssignment] = useState(null)
-
-  // Classroom 연동 상태
+  // Classroom 연동 상태 — 배정 저장 "후"가 아니라 만드는 화면에서 바로 설정한다. 이렇게 해야
+  // 예약 게시(state: DRAFT + scheduledTime)를 배정 생성과 한 번에 할 수 있다 — 저장부터 하고
+  // 나중에 따로 게시하면 "지금 게시"만 가능하고 예약은 애초에 걸 수 없다.
+  const [classroomEnabled, setClassroomEnabled] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [courses, setCourses] = useState(null)
   const [selectedCourseId, setSelectedCourseId] = useState('')
+  const [publishMode, setPublishMode] = useState('now') // 'now' | 'scheduled'
+  const [scheduledAtStr, setScheduledAtStr] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [classroomError, setClassroomError] = useState('')
 
@@ -72,40 +80,6 @@ export default function AssignmentEditor() {
     load()
   }, [assignmentId, isEdit, user])
 
-  async function handleSave() {
-    if (responseType === 'essay' && !passageId) { alert('지문을 선택해주세요.'); return }
-    if (responseType === 'structured' && !templateId) { alert('보고서 양식을 선택해주세요.'); return }
-    if (!title.trim()) { alert('배정 제목을 입력해주세요.'); return }
-    setSaving(true)
-    try {
-      const dueAt = dueAtStr ? new Date(`${dueAtStr}T23:59:59`) : null
-      if (isEdit) {
-        await updateAssignment(assignmentId, {
-          title: title.trim(),
-          dueAt,
-          wordLimit: wordLimit ? Number(wordLimit) : null,
-          status
-        })
-        navigate(`/admin/assignments/${assignmentId}`)
-      } else {
-        const id = await createAssignment({
-          responseType,
-          passageId: responseType === 'structured' ? (passageId || null) : passageId,
-          templateId: responseType === 'structured' ? templateId : null,
-          title: title.trim(),
-          dueAt,
-          wordLimit: wordLimit ? Number(wordLimit) : null
-        })
-        setSavedAssignment({ id, title: title.trim(), dueAt })
-      }
-    } catch (err) {
-      console.error('배정 저장 실패:', err)
-      alert('저장 중 오류가 발생했습니다.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   async function handleConnectClassroom() {
     setClassroomError('')
     setConnecting(true)
@@ -122,34 +96,85 @@ export default function AssignmentEditor() {
     }
   }
 
-  async function handlePublish() {
-    if (!selectedCourseId || !savedAssignment) return
-    setPublishing(true)
+  async function handleSave() {
+    if (responseType === 'essay' && !passageId) { alert('지문을 선택해주세요.'); return }
+    if (responseType === 'structured' && !templateId) { alert('보고서 양식을 선택해주세요.'); return }
+    if (!title.trim()) { alert('배정 제목을 입력해주세요.'); return }
+    if (!isEdit && classroomEnabled) {
+      if (!selectedCourseId) { alert('게시할 Classroom 수업을 선택해주세요.'); return }
+      if (publishMode === 'scheduled' && !scheduledAtStr) { alert('예약 게시 시각을 입력해주세요.'); return }
+    }
+    let scheduledAt = null
+    if (!isEdit && classroomEnabled && publishMode === 'scheduled') {
+      scheduledAt = new Date(scheduledAtStr)
+      if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+        alert('예약 시각은 지금보다 이후여야 합니다.')
+        return
+      }
+    }
+
+    setSaving(true)
     setClassroomError('')
     try {
-      const course = courses.find(c => c.id === selectedCourseId)
-      const linkUrl = `${window.location.origin}/write/${savedAssignment.id}`
-      const result = await createCourseWork(selectedCourseId, {
-        title: savedAssignment.title,
-        description: `물리학Ⅱ 서술형 수행평가입니다. 아래 링크에서 지문을 읽고 답안을 작성해주세요.\n${linkUrl}`,
-        linkUrl,
-        dueDate: savedAssignment.dueAt || undefined
+      const dueAt = dueAtStr ? new Date(`${dueAtStr}T23:59:59`) : null
+      if (isEdit) {
+        await updateAssignment(assignmentId, {
+          title: title.trim(),
+          dueAt,
+          wordLimit: wordLimit ? Number(wordLimit) : null,
+          status
+        })
+        navigate(`/admin/assignments/${assignmentId}`)
+        return
+      }
+
+      const id = await createAssignment({
+        responseType,
+        passageId: responseType === 'structured' ? (passageId || null) : passageId,
+        templateId: responseType === 'structured' ? templateId : null,
+        title: title.trim(),
+        dueAt,
+        wordLimit: wordLimit ? Number(wordLimit) : null
       })
-      await updateAssignment(savedAssignment.id, {
-        classroom: {
-          courseId: selectedCourseId,
-          courseWorkId: result.id,
-          courseName: course?.name || '',
-          alternateLink: result.alternateLink || '',
-          postedAt: new Date()
+
+      if (classroomEnabled && selectedCourseId) {
+        setPublishing(true)
+        try {
+          const course = courses.find(c => c.id === selectedCourseId)
+          const linkUrl = `${window.location.origin}/write/${id}`
+          const result = await createCourseWork(selectedCourseId, {
+            title: title.trim(),
+            description: `물리학Ⅱ 서술형 수행평가입니다. 아래 링크에서 지문을 읽고 답안을 작성해주세요.\n${linkUrl}`,
+            linkUrl,
+            dueDate: dueAt || undefined,
+            scheduledAt: scheduledAt || undefined
+          })
+          await updateAssignment(id, {
+            classroom: {
+              courseId: selectedCourseId,
+              courseWorkId: result.id,
+              courseName: course?.name || '',
+              alternateLink: result.alternateLink || '',
+              scheduledAt: scheduledAt || null,
+              postedAt: new Date()
+            }
+          })
+        } catch (err) {
+          // 배정 자체는 이미 만들어졌으니 되돌리지 않는다 — Classroom 게시만 실패했다고
+          // 알리고, 교사는 대시보드에서 다시 게시를 시도할 수 있다(AssignmentDashboard.jsx).
+          console.error('Classroom 게시 실패:', err)
+          alert(`배정은 저장되었지만 Classroom 게시에는 실패했습니다: ${getClassroomErrorMessage(err, '게시')}\n대시보드에서 다시 시도할 수 있습니다.`)
+        } finally {
+          setPublishing(false)
         }
-      })
-      navigate(`/admin/assignments/${savedAssignment.id}`)
+      }
+
+      navigate(`/admin/assignments/${id}`)
     } catch (err) {
-      console.error('Classroom 게시 실패:', err)
-      setClassroomError(getClassroomErrorMessage(err, '게시'))
+      console.error('배정 저장 실패:', err)
+      alert('저장 중 오류가 발생했습니다.')
     } finally {
-      setPublishing(false)
+      setSaving(false)
     }
   }
 
@@ -183,144 +208,168 @@ export default function AssignmentEditor() {
       </header>
 
       <main className="flex-1 p-5 max-w-xl mx-auto w-full space-y-5">
-        {!savedAssignment ? (
-          <>
-            <div>
-              <label className={labelClass}>응답 유형</label>
-              <div className="flex gap-2">
-                {[
-                  { value: 'essay', label: '서술형 (지문 + 자유서술)' },
-                  { value: 'structured', label: '구조화된 보고서 (양식에 맞춰 항목별 작성)' }
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => !isEdit && setResponseType(opt.value)}
-                    disabled={isEdit}
-                    className={`flex-1 rounded-xl border px-3 py-2.5 text-xs font-medium text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                      responseType === opt.value ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {isEdit && <p className="mt-1.5 text-xs text-gray-400">학생 작성 기록의 일관성을 위해 배정 후에는 응답 유형을 바꿀 수 없습니다.</p>}
-            </div>
+        <div>
+          <label className={labelClass}>응답 유형</label>
+          <div className="flex gap-2">
+            {[
+              { value: 'essay', label: '서술형 (지문 + 자유서술)' },
+              { value: 'structured', label: '구조화된 보고서 (양식에 맞춰 항목별 작성)' }
+            ].map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => !isEdit && setResponseType(opt.value)}
+                disabled={isEdit}
+                className={`flex-1 rounded-xl border px-3 py-2.5 text-xs font-medium text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  responseType === opt.value ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {isEdit && <p className="mt-1.5 text-xs text-gray-400">학생 작성 기록의 일관성을 위해 배정 후에는 응답 유형을 바꿀 수 없습니다.</p>}
+        </div>
 
-            {responseType === 'structured' && (
-              <div>
-                <label className={labelClass}>보고서 양식</label>
-                {templates.length === 0 ? (
-                  <p className="text-sm text-gray-400">활성화된 양식이 없습니다. 먼저 "보고서 양식 관리"에서 만들어주세요.</p>
-                ) : (
-                  <select className={inputClass} value={templateId} onChange={e => setTemplateId(e.target.value)} disabled={isEdit}>
-                    {templates.map(t => <option key={t.id} value={t.id}>{t.title} ({t.sections?.length || 0}개 섹션)</option>)}
-                  </select>
-                )}
-              </div>
+        {responseType === 'structured' && (
+          <div>
+            <label className={labelClass}>보고서 양식</label>
+            {templates.length === 0 ? (
+              <p className="text-sm text-gray-400">활성화된 양식이 없습니다. 먼저 "보고서 양식 관리"에서 만들어주세요.</p>
+            ) : (
+              <select className={inputClass} value={templateId} onChange={e => setTemplateId(e.target.value)} disabled={isEdit}>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.title} ({t.sections?.length || 0}개 섹션)</option>)}
+              </select>
             )}
-
-            <div>
-              <label className={labelClass}>
-                지문 선택{responseType === 'structured' && ' (선택, 참고 자료로만 보여줍니다)'}
-              </label>
-              {passages.length === 0 ? (
-                <p className="text-sm text-gray-400">활성화된 지문이 없습니다.{responseType === 'essay' && ' 먼저 지문을 등록해주세요.'}</p>
-              ) : (
-                <select className={inputClass} value={passageId} onChange={e => setPassageId(e.target.value)} disabled={isEdit}>
-                  {responseType === 'structured' && <option value="">지문 없음</option>}
-                  {passages.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
-                </select>
-              )}
-              {isEdit && <p className="mt-1.5 text-xs text-gray-400">학생 작성 기록의 일관성을 위해 배정된 지문은 변경할 수 없습니다.</p>}
-            </div>
-
-            <div>
-              <label className={labelClass}>배정 제목</label>
-              <input className={inputClass} value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2학기 서술형 수행평가 — 밀리컨 실험" />
-            </div>
-
-            <div>
-              <label className={labelClass}>마감일 (선택)</label>
-              <input type="date" className={inputClass} value={dueAtStr} onChange={e => setDueAtStr(e.target.value)} />
-            </div>
-
-            {responseType === 'essay' && (
-              <div>
-                <label className={labelClass}>목표 분량 override (선택, 비우면 지문 기본값 사용)</label>
-                <input type="number" className={`${inputClass} max-w-[140px]`} value={wordLimit} onChange={e => setWordLimit(e.target.value)} placeholder="800" />
-              </div>
-            )}
-
-            {isEdit && (
-              <div>
-                <label className={labelClass}>배정 상태</label>
-                <select className={`${inputClass} max-w-[180px]`} value={status} onChange={e => setStatus(e.target.value)}>
-                  <option value="open">진행 중</option>
-                  <option value="closed">마감</option>
-                </select>
-              </div>
-            )}
-
-            <button
-              onClick={handleSave}
-              disabled={saving || (responseType === 'essay' ? passages.length === 0 : templates.length === 0)}
-              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
-            >
-              {saving ? '저장 중...' : isEdit ? '변경 사항 저장' : '배정 저장'}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-              ✅ 배정이 저장되었습니다. 학생용 작성 링크:
-              <div className="mt-1.5 font-mono text-xs bg-white border border-green-100 rounded-lg px-2 py-1.5 break-all">
-                {window.location.origin}/write/{savedAssignment.id}
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-sm font-bold text-gray-800 mb-3">🎓 Google Classroom에 게시</p>
-
-              {!hasClassroomConfig() ? (
-                <p className="text-xs text-gray-400">VITE_GOOGLE_CLIENT_ID 환경변수가 설정되지 않아 Classroom 게시를 사용할 수 없습니다. 링크를 직접 공유해주세요.</p>
-              ) : !courses ? (
-                <button
-                  onClick={handleConnectClassroom}
-                  disabled={connecting}
-                  className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium hover:bg-gray-50 disabled:opacity-40"
-                >
-                  {connecting ? '연결 중...' : 'Classroom 연결하기'}
-                </button>
-              ) : courses.length === 0 ? (
-                <p className="text-xs text-gray-400">담당 중인 활성 수업이 없습니다.</p>
-              ) : (
-                <div className="space-y-3">
-                  <select className={inputClass} value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)}>
-                    {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button
-                    onClick={handlePublish}
-                    disabled={publishing}
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
-                  >
-                    {publishing ? '게시 중...' : '선택한 수업에 과제로 게시'}
-                  </button>
-                </div>
-              )}
-
-              {classroomError && <p className="text-xs text-red-500 mt-2">{classroomError}</p>}
-            </div>
-
-            <button
-              onClick={() => navigate(`/admin/assignments/${savedAssignment.id}`)}
-              className="w-full py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50"
-            >
-              Classroom 게시 없이 대시보드로 이동
-            </button>
-          </>
+          </div>
         )}
+
+        <div>
+          <label className={labelClass}>
+            지문 선택{responseType === 'structured' && ' (선택, 참고 자료로만 보여줍니다)'}
+          </label>
+          {passages.length === 0 ? (
+            <p className="text-sm text-gray-400">활성화된 지문이 없습니다.{responseType === 'essay' && ' 먼저 지문을 등록해주세요.'}</p>
+          ) : (
+            <select className={inputClass} value={passageId} onChange={e => setPassageId(e.target.value)} disabled={isEdit}>
+              {responseType === 'structured' && <option value="">지문 없음</option>}
+              {passages.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+          )}
+          {isEdit && <p className="mt-1.5 text-xs text-gray-400">학생 작성 기록의 일관성을 위해 배정된 지문은 변경할 수 없습니다.</p>}
+        </div>
+
+        <div>
+          <label className={labelClass}>배정 제목</label>
+          <input className={inputClass} value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2학기 서술형 수행평가 — 밀리컨 실험" />
+        </div>
+
+        <div>
+          <label className={labelClass}>마감일 (선택)</label>
+          <input type="date" className={inputClass} value={dueAtStr} onChange={e => setDueAtStr(e.target.value)} />
+        </div>
+
+        {responseType === 'essay' && (
+          <div>
+            <label className={labelClass}>목표 분량 override (선택, 비우면 지문 기본값 사용)</label>
+            <input type="number" className={`${inputClass} max-w-[140px]`} value={wordLimit} onChange={e => setWordLimit(e.target.value)} placeholder="800" />
+          </div>
+        )}
+
+        {isEdit && (
+          <div>
+            <label className={labelClass}>배정 상태</label>
+            <select className={`${inputClass} max-w-[180px]`} value={status} onChange={e => setStatus(e.target.value)}>
+              <option value="open">진행 중</option>
+              <option value="closed">마감</option>
+            </select>
+          </div>
+        )}
+
+        {/* Classroom 연동은 새로 만들 때만 이 화면에서 설정한다 — 저장 후 따로 연결하면
+            이미 PUBLISHED 상태로만 게시할 수 있어 예약 게시가 애초에 불가능하다. 기존
+            배정에 나중에 연결하는 것은 지금처럼 대시보드(AssignmentDashboard.jsx)에서 한다. */}
+        {!isEdit && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={classroomEnabled}
+                onChange={e => setClassroomEnabled(e.target.checked)}
+                disabled={!hasClassroomConfig()}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300"
+              />
+              <span className="text-sm font-bold text-gray-800">🎓 Google Classroom에도 게시</span>
+            </label>
+
+            {!hasClassroomConfig() ? (
+              <p className="mt-1.5 text-xs text-gray-400">VITE_GOOGLE_CLIENT_ID 환경변수가 설정되지 않아 Classroom 게시를 사용할 수 없습니다. 링크를 직접 공유해주세요.</p>
+            ) : classroomEnabled && (
+              <div className="mt-3 space-y-3">
+                {!courses ? (
+                  <button
+                    type="button"
+                    onClick={handleConnectClassroom}
+                    disabled={connecting}
+                    className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    {connecting ? '연결 중...' : 'Classroom 연결하기'}
+                  </button>
+                ) : courses.length === 0 ? (
+                  <p className="text-xs text-gray-400">담당 중인 활성 수업이 없습니다.</p>
+                ) : (
+                  <>
+                    <div>
+                      <label className={labelClass}>게시할 수업</label>
+                      <select className={inputClass} value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)}>
+                        {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelClass}>게시 시점</label>
+                      <div className="flex gap-2">
+                        {[['now', '지금 게시'], ['scheduled', '예약 게시']].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => setPublishMode(value)}
+                            className={`flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                              publishMode === value ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {publishMode === 'scheduled' && (
+                      <div>
+                        <label className={labelClass}>예약 게시 시각</label>
+                        <input
+                          type="datetime-local"
+                          className={inputClass}
+                          value={scheduledAtStr}
+                          min={nowForDatetimeLocal()}
+                          onChange={e => setScheduledAtStr(e.target.value)}
+                        />
+                        <p className="mt-1 text-xs text-gray-400">지정한 시각까지 Classroom에 초안으로만 남아있다가, 그 시각에 자동으로 학생들에게 공개됩니다.</p>
+                      </div>
+                    )}
+                  </>
+                )}
+                {classroomError && <p className="text-xs text-red-500">{classroomError}</p>}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={handleSave}
+          disabled={saving || publishing || (responseType === 'essay' ? passages.length === 0 : templates.length === 0)}
+          className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-40 transition-colors"
+        >
+          {publishing ? 'Classroom에 게시 중...' : saving ? '저장 중...' : isEdit ? '변경 사항 저장' : '배정 저장'}
+        </button>
       </main>
     </div>
   )

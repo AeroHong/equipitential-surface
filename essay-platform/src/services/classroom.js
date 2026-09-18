@@ -155,18 +155,26 @@ export async function getCourseStudentCount(courseId) {
 }
 
 /**
- * 선택한 수업에 실제 과제(courseWork)를 게시
+ * 선택한 수업에 실제 과제(courseWork)를 게시. scheduledAt을 주면 그 시각까지는 Classroom에
+ * DRAFT(초안)로만 남아있다가 Classroom이 알아서 그 시각에 자동으로 학생들에게 공개한다
+ * (Classroom API의 state: 'DRAFT' + scheduledTime 조합 — 우리 쪽에서 별도로 다시 호출할
+ * 필요가 없다).
  * @param {string} courseId
- * @param {{title: string, description: string, linkUrl: string, dueDate?: Date}} params
+ * @param {{title: string, description: string, linkUrl: string, dueDate?: Date, scheduledAt?: Date}} params
  * @returns {Promise<object>} 생성된 courseWork
  */
-export async function createCourseWork(courseId, { title, description, linkUrl, dueDate }) {
+export async function createCourseWork(courseId, { title, description, linkUrl, dueDate, scheduledAt }) {
   const body = {
     title,
     description,
     workType: 'ASSIGNMENT',
-    state: 'PUBLISHED',
     materials: [{ link: { url: linkUrl } }]
+  }
+  if (scheduledAt) {
+    body.state = 'DRAFT'
+    body.scheduledTime = scheduledAt.toISOString()
+  } else {
+    body.state = 'PUBLISHED'
   }
   if (dueDate) {
     body.dueDate = {

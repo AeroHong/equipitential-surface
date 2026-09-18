@@ -254,6 +254,12 @@ export default function AssignmentDashboard() {
                 )}
               </div>
               {assignment.classroom?.courseName && <p className="mb-1 text-xs text-emerald-700">현재 게시 수업: {assignment.classroom.courseName}</p>}
+              {assignment.classroom?.scheduledAt && (
+                <p className="mb-1 text-xs text-amber-600">
+                  ⏰ 예약 게시: {(assignment.classroom.scheduledAt.toDate?.() || new Date(assignment.classroom.scheduledAt)).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  {(assignment.classroom.scheduledAt.toDate?.() || new Date(assignment.classroom.scheduledAt)) > new Date() ? ' (그때까지 Classroom엔 초안으로만 보입니다)' : ' (지남 — 이미 공개됨)'}
+                </p>
+              )}
               {assignment.classroom?.courseId && (
                 <div className="mb-3 flex items-center gap-2">
                   {classroomStudentCount === null ? (
