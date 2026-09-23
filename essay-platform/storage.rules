@@ -11,9 +11,22 @@ service firebase.storage {
         );
     }
 
-    match /essayPassages/{allPaths=**} {
+    function isTeacher() {
+      return request.auth != null &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    // 지문 이미지 — services/storage.js의 uploadPassageImage()가 essayPassages/{uid}/...
+    // 경로로 올린다(uid = 업로드하는 본인). 예전엔 write가 isAdmin()(super_admin 전용)만
+    // 허용해서, 일반 teacher 계정으로 지문을 만들 때 이미지 업로드가 storage/unauthorized로
+    // 항상 실패하는 버그가 있었다 — Firestore의 essayPassages 생성 권한(isEssayStaff() &&
+    // createdBy==본인, firestore.rules)과 같은 모델로 맞춘다: 본인 uid 경로 + teacher
+    // 역할이면 허용, admin은 전체 허용.
+    match /essayPassages/{uid}/{allPaths=**} {
       allow read: if request.auth != null;
-      allow write: if isAdmin();
+      allow write: if (isAdmin() || (isTeacher() && request.auth.uid == uid)) &&
+        request.resource.size < 20 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
     }
 
     // 학생 답안에 끼워 넣는 이미지 — 지문과 달리 "작성자 = 그 학생 본인"이라 교사 승인
