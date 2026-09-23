@@ -13,7 +13,7 @@ function scrollToSection(id) {
  * 놓치지 않고 다 채우게 하는 것). 입력 위젯 자체는 자유서술과 같은 EssayEditor를 섹션마다
  * 하나씩 재사용한다 — 붙여넣기/타이핑 로깅도 그대로 따라오고, sectionId만 얹어 보낸다.
  */
-export default function StructuredReportEditor({ template, sections, onChange, disabled, logInput, logKeydown, logPaste }) {
+export default function StructuredReportEditor({ template, sections, onChange, disabled, logInput, logKeydown, logPaste, scores }) {
   if (!template) return null
 
   function updateSection(id, patch) {
@@ -68,9 +68,14 @@ export default function StructuredReportEditor({ template, sections, onChange, d
               )}
               <div id={`section-${sec.id}`} className="scroll-mt-24">
                 {sec.heading && (
-                  <label className="block text-sm font-bold text-gray-800 mb-1">
+                  <label className="mb-1 flex items-center gap-2 text-sm font-bold text-gray-800">
                     {sec.heading}
                     {sec.required && <span className="text-red-500 ml-0.5">*</span>}
+                    {scores?.[sec.id] && (
+                      <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
+                        {scores[sec.id].score ?? 0}{scores[sec.id].maxScore != null ? ` / ${scores[sec.id].maxScore}` : ''}점
+                      </span>
+                    )}
                   </label>
                 )}
                 {sec.guidance && (

@@ -8,7 +8,7 @@ function makeSectionId() {
 }
 
 function emptySection() {
-  return { id: makeSectionId(), groupLabel: '', heading: '', guidance: '', required: true, wordLimitGuide: null }
+  return { id: makeSectionId(), groupLabel: '', heading: '', guidance: '', required: true, wordLimitGuide: null, maxScore: null }
 }
 
 const emptyForm = { title: '', description: '', sections: [emptySection()] }
@@ -77,7 +77,8 @@ export default function TemplateEditor() {
         heading: s.heading.trim(),
         guidance: s.guidance.trim(),
         required: !!s.required,
-        wordLimitGuide: s.wordLimitGuide ? Number(s.wordLimitGuide) : null
+        wordLimitGuide: s.wordLimitGuide ? Number(s.wordLimitGuide) : null,
+        maxScore: s.maxScore ? Number(s.maxScore) : null
       }))
     if (sections.length === 0) { alert('섹션을 하나 이상 입력해주세요.'); return }
 
@@ -177,7 +178,7 @@ export default function TemplateEditor() {
                   <textarea className={`${inputClass} resize-none`} rows={2} value={s.guidance} onChange={e => setSection(idx, { guidance: e.target.value })} placeholder="예: 내가 탐구하고 싶은 주제를 한 문장으로 표현한다." />
                 </div>
 
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-4">
                   <label className="flex items-center gap-1.5 text-xs text-gray-600">
                     <input type="checkbox" checked={s.required} onChange={e => setSection(idx, { required: e.target.checked })} />
                     필수 항목
@@ -190,6 +191,16 @@ export default function TemplateEditor() {
                       value={s.wordLimitGuide ?? ''}
                       onChange={e => setSection(idx, { wordLimitGuide: e.target.value })}
                       placeholder="예: 200"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-gray-400">배점(선택, "서술형 평가-문항" 채점에 사용)</span>
+                    <input
+                      type="number"
+                      className={`${inputClass} w-20`}
+                      value={s.maxScore ?? ''}
+                      onChange={e => setSection(idx, { maxScore: e.target.value })}
+                      placeholder="예: 10"
                     />
                   </div>
                 </div>

@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "presence": {
+      "$assignmentId": {
+        "$studentUid": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $studentUid",
+          ".validate": "newData.hasChildren(['state', 'lastActive'])",
+          "state": {
+            ".validate": "newData.isString() && newData.val().matches(/^(viewing|typing|away|offline)$/)"
+          },
+          "lastActive": {
+            ".validate": "newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    }
+  }
+}

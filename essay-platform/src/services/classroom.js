@@ -155,6 +155,34 @@ export async function getCourseStudentCount(courseId) {
 }
 
 /**
+ * 수업에 등록된 학생 명단(이메일 포함). getCourseStudentCount와 같은 페이지네이션 패턴이지만,
+ * 개수만이 아니라 이메일까지 보존한다 — 대시보드에서 제출물을 "어느 반 학생인지"로 묶어
+ * 보여줄 때(반별 로스터 이메일 ↔ essaySubmissions.studentEmail 매칭) 쓴다.
+ * @param {string} courseId
+ * @returns {Promise<Array<{userId: string, email: string, name: string}>>}
+ */
+export async function listCourseStudents(courseId) {
+  const students = []
+  let pageToken = ''
+  do {
+    const res = await window.gapi.client.classroom.courses.students.list({
+      courseId,
+      pageSize: 100,
+      pageToken: pageToken || undefined
+    })
+    for (const s of res.result.students || []) {
+      students.push({
+        userId: s.userId,
+        email: (s.profile?.emailAddress || '').toLowerCase(),
+        name: s.profile?.name?.fullName || ''
+      })
+    }
+    pageToken = res.result.nextPageToken || ''
+  } while (pageToken)
+  return students
+}
+
+/**
  * 선택한 수업에 실제 과제(courseWork)를 게시. scheduledAt을 주면 그 시각까지는 Classroom에
  * DRAFT(초안)로만 남아있다가 Classroom이 알아서 그 시각에 자동으로 학생들에게 공개한다
  * (Classroom API의 state: 'DRAFT' + scheduledTime 조합 — 우리 쪽에서 별도로 다시 호출할
@@ -191,4 +219,21 @@ export async function createCourseWork(courseId, { title, description, linkUrl, 
     resource: body
   })
   return res.result
+}
+
+/**
+ * 이미 게시된 courseWork의 설명(description)만 다시 써서 덮어쓴다. 코드에서 게시 문구
+ * 템플릿을 바꿔도(예: 과목명 문구 제거) 이미 Classroom에 게시된 기존 과제는 게시 당시
+ * 저장된 문구가 그대로 남아있으므로, 필요하면 이 함수로 다시 동기화한다.
+ * @param {string} courseId
+ * @param {string} courseWorkId
+ * @param {string} description
+ */
+export async function updateCourseWorkDescription(courseId, courseWorkId, description) {
+  await window.gapi.client.classroom.courses.courseWork.patch({
+    courseId,
+    id: courseWorkId,
+    updateMask: 'description',
+    resource: { description }
+  })
 }

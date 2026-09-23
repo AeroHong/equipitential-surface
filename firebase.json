@@ -29,5 +29,8 @@
   },
   "storage": {
     "rules": "essay-platform/storage.rules"
+  },
+  "database": {
+    "rules": "database.rules.json"
   }
 }

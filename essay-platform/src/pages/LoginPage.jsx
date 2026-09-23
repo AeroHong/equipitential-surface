@@ -62,8 +62,6 @@ export default function LoginPage() {
             ✍️
           </div>
           <h1 className="text-2xl font-bold text-gray-900">서술형 수행평가</h1>
-          <p className="text-gray-500 mt-1 text-sm">물리학Ⅱ 작성 플랫폼</p>
-          <p className="text-gray-400 text-xs mt-1">선유고등학교 물리학</p>
         </div>
 
         {error && (

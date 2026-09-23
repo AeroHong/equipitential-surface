@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getAssignment, getSubmission, getReplayLogs } from '../../services/essay.js'
+import { getAssignment, getSubmission, getReplayLogs, saveGrading, setScoreReleased } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { sanitizeAnswerHtml } from '../../utils/sanitizeHtml.js'
 import { renderMathInElement } from '../../utils/mathExpression.js'
@@ -12,15 +12,15 @@ const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-
 const ALL_SECTIONS = '__all__'
 
 /** 왼쪽 패널 — 로그 재생과 무관하게, 지금까지 저장된 최종 답안 전체를 한 번에 보여준다. */
-function FullAnswerView({ isStructured, template, submission }) {
+function FullAnswerView({ usesSections, template, submission }) {
   // dangerouslySetInnerHTML로 넣은 data-math span은 저장된 그대로(평문 LaTeX 폴백)라 KaTeX로
   // 다시 그려주지 않으면 수식이 아니라 LaTeX 구문 그대로 보인다 — 렌더 뒤에 한 번 그려준다.
   const rootRef = useRef(null)
   useEffect(() => {
     if (rootRef.current) renderMathInElement(rootRef.current)
-  }, [isStructured, template, submission])
+  }, [usesSections, template, submission])
 
-  if (isStructured) {
+  if (usesSections) {
     let lastGroup = null
     const sections = template?.sections || []
     if (sections.length === 0) return <p className="text-sm text-gray-300">양식을 불러오지 못했습니다.</p>
@@ -47,6 +47,97 @@ function FullAnswerView({ isStructured, template, submission }) {
   return (
     <div ref={rootRef}>
       {html ? <div className={ANSWER_HTML_CLASS} dangerouslySetInnerHTML={{ __html: html }} /> : <p className="text-sm text-gray-300">(작성 내용 없음)</p>}
+    </div>
+  )
+}
+
+/** essay_calculator("서술형 평가-문항") 전용 채점 패널 — 문항별 점수 입력 + 총점 + 공개 토글.
+ * 점수 저장과 공개는 서로 다른 동작이라(services/essay.js의 saveGrading/setScoreReleased)
+ * 버튼도 분리했다 — 교사가 채점을 다 마치기 전까지는 학생에게 안 보이게 둘 수 있다. */
+function GradingPanel({ template, submission, onSaved }) {
+  const [scores, setScores] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [releasing, setReleasing] = useState(false)
+
+  useEffect(() => {
+    const initial = {}
+    for (const sec of template?.sections || []) {
+      const v = submission?.sections?.[sec.id]?.score
+      initial[sec.id] = v == null ? '' : String(v)
+    }
+    setScores(initial)
+  }, [template, submission?.id])
+
+  const sections = template?.sections || []
+  if (sections.length === 0) return null
+
+  const totalEntered = Object.values(scores).reduce((sum, v) => sum + (v === '' ? 0 : Number(v) || 0), 0)
+  const totalMax = sections.reduce((sum, s) => sum + (s.maxScore || 0), 0)
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const numeric = Object.fromEntries(Object.entries(scores).map(([id, v]) => [id, v === '' ? null : Number(v)]))
+      await saveGrading(submission.id, numeric)
+      onSaved(numeric, totalEntered)
+    } catch (err) {
+      console.error('채점 저장 실패:', err)
+      alert('채점 저장 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleToggleRelease() {
+    setReleasing(true)
+    try {
+      const next = !submission.scoreReleased
+      await setScoreReleased(submission.id, next)
+      onSaved(null, null, next)
+    } catch (err) {
+      console.error('공개 상태 변경 실패:', err)
+      alert('공개 상태를 바꾸는 중 오류가 발생했습니다.')
+    } finally {
+      setReleasing(false)
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-2xl border border-gray-200 bg-white p-4 print:hidden">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-bold text-gray-700">채점</h2>
+        <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${submission.scoreReleased ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+          {submission.scoreReleased ? '학생에게 공개됨' : '학생에게 비공개'}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {sections.map(sec => (
+          <div key={sec.id} className="flex items-center justify-between gap-3">
+            <span className="truncate text-sm text-gray-600">{sec.heading || sec.groupLabel || '섹션'}</span>
+            <div className="flex flex-shrink-0 items-center gap-1">
+              <input
+                type="number"
+                className="w-20 rounded-lg border border-gray-200 px-2 py-1 text-right text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={scores[sec.id] ?? ''}
+                onChange={e => setScores(s => ({ ...s, [sec.id]: e.target.value }))}
+                placeholder="0"
+              />
+              <span className="w-10 text-xs text-gray-400">/ {sec.maxScore ?? '—'}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+        <p className="text-sm font-bold text-gray-800">총점 {totalEntered}{totalMax > 0 ? ` / ${totalMax}` : ''}</p>
+        <div className="flex gap-2">
+          <button onClick={handleSave} disabled={saving} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-40">
+            {saving ? '저장 중...' : '점수 저장'}
+          </button>
+          <button onClick={handleToggleRelease} disabled={releasing} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+            {releasing ? '변경 중...' : submission.scoreReleased ? '공개 취소' : '학생에게 공개'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -108,7 +199,7 @@ export default function ReplayView() {
         setAssignment(a)
         setSubmission(sub)
         setLogs(replayLogs)
-        if (a?.responseType === 'structured' && a.templateId) {
+        if ((a?.responseType === 'structured' || a?.responseType === 'essay_calculator') && a.templateId) {
           const tpl = await getTemplate(a.templateId)
           setTemplate(tpl)
           if (tpl?.sections?.length) setSectionId(tpl.sections[0].id)
@@ -122,9 +213,22 @@ export default function ReplayView() {
       .finally(() => setLoading(false))
   }, [assignmentId, uid])
 
-  const isStructured = assignment?.responseType === 'structured'
+  const usesSections = assignment?.responseType === 'structured' || assignment?.responseType === 'essay_calculator'
+  const isGradable = assignment?.responseType === 'essay_calculator'
 
-  // structured 제출물은 리플레이 로그 이벤트마다 sectionId가 실려 있다(services/essay.js) —
+  function handleGradingSaved(sectionScoreUpdates, totalScore, releasedOverride) {
+    setSubmission(s => {
+      if (!s) return s
+      if (typeof releasedOverride === 'boolean') return { ...s, scoreReleased: releasedOverride }
+      const nextSections = { ...(s.sections || {}) }
+      for (const [id, score] of Object.entries(sectionScoreUpdates || {})) {
+        nextSections[id] = { ...(nextSections[id] || {}), score }
+      }
+      return { ...s, sections: nextSections, totalScore }
+    })
+  }
+
+  // sections 기반 제출물(structured/essay_calculator)은 리플레이 로그 이벤트마다 sectionId가 실려 있다(services/essay.js) —
   // 선택된 섹션의 이벤트만 걸러서 ReplayPlayer에 넘긴다. "전체 보기"를 고르면 필터링 대신
   // 섹션별 최신 상태를 이어붙인 합성 스냅샷으로 바꿔서 넘긴다(mergeSectionInputEvents).
   // 두 경우 모두 ReplayPlayer 자체는 손대지 않는다 — 그저 받는 배열이 다를 뿐이다.
@@ -160,7 +264,7 @@ export default function ReplayView() {
       // docx 라이브러리가 꽤 무거워서(수백 KB) 실제로 내보내기를 누를 때만 불러온다 —
       // 학생 등 이 버튼을 쓸 일이 없는 대부분의 방문에서는 번들에 안 실리게 하기 위함.
       const { exportAnswerToDocx } = await import('../../utils/exportDocx.js')
-      const sections = isStructured
+      const sections = usesSections
         ? (template?.sections || []).map(sec => ({
           groupLabel: sec.groupLabel,
           heading: sec.heading,
@@ -228,8 +332,9 @@ export default function ReplayView() {
                 </div>
               </div>
               <div className="bg-white rounded-2xl border border-gray-200 p-5 print:border-0 print:p-0">
-                <FullAnswerView isStructured={isStructured} template={template} submission={submission} />
+                <FullAnswerView usesSections={usesSections} template={template} submission={submission} />
               </div>
+              {isGradable && <GradingPanel template={template} submission={submission} onSaved={handleGradingSaved} />}
             </section>
 
             {/* 오른쪽: 기존 로그 점검(리플레이) 기능 */}

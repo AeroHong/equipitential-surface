@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
 import { auth } from '../../firebase.js'
 import { useAuth } from '../../App.jsx'
-import { listAssignments, deleteAssignment, countSubmissionsForAssignment } from '../../services/essay.js'
+import { listAssignments, deleteAssignment, countSubmissionsForAssignment, getAssignmentClassrooms } from '../../services/essay.js'
 
 const STATUS_LABEL = { open: '진행 중', closed: '마감' }
 
@@ -117,8 +117,10 @@ export default function EssayAdminHome() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-400">마감: {formatDate(a.dueAt)}</p>
-                {a.classroom?.courseName && (
-                  <p className="text-xs text-emerald-600 mt-1.5">🎓 Classroom 게시됨 — {a.classroom.courseName}</p>
+                {getAssignmentClassrooms(a).length > 0 && (
+                  <p className="text-xs text-emerald-600 mt-1.5 truncate">
+                    🎓 Classroom 게시됨 — {getAssignmentClassrooms(a).map(c => c.courseName).filter(Boolean).join(', ')}
+                  </p>
                 )}
               </div>
             ))}

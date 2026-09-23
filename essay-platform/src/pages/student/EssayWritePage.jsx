@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import {
@@ -11,10 +11,12 @@ import { scanText } from '../../utils/aiPatterns.js'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { useAutosave } from '../../hooks/useAutosave.js'
 import { useEssayLogger } from '../../hooks/useEssayLogger.js'
+import { usePresence } from '../../hooks/usePresence.js'
 import PassageViewer from './PassageViewer.jsx'
 import EssayEditor from '../../components/EssayEditor.jsx'
 import StructuredReportEditor from './StructuredReportEditor.jsx'
 import SaveStateLabel from '../../components/SaveStateLabel.jsx'
+import CalculatorPanel from '../../components/CalculatorPanel.jsx'
 
 export default function EssayWritePage() {
   const { assignmentId } = useParams()
@@ -39,6 +41,66 @@ export default function EssayWritePage() {
   const [savingIdentity, setSavingIdentity] = useState(false)
 
   const isStructured = assignment?.responseType === 'structured'
+  const isEssayCalculatorType = assignment?.responseType === 'essay_calculator'
+  // 공학용 계산기는 essay_calculator 안에서도 켜고 끌 수 있는 별도 체크박스다(과목 무관
+  // 플랫폼이라 이 유형을 고른다고 계산기가 자동으로 붙지는 않음) — 양식/채점 여부와는
+  // 독립적이라 assignment.calculatorEnabled를 따로 확인한다.
+  const calculatorEnabled = isEssayCalculatorType && assignment?.calculatorEnabled === true
+  // essay_calculator는 답변 방식 자체가 structured와 같다(양식의 문항별로 따로 입력) —
+  // 계산기 체크박스와 무관하게 편집기 선택/제출 검증/자동저장 분기는 usesSections로 묶는다.
+  const usesSections = isStructured || isEssayCalculatorType
+  const [calculatorSheetOpen, setCalculatorSheetOpen] = useState(false)
+  // 데스크톱 상시 패널은 `hidden lg:block`로 CSS만 숨기면 좁은 화면에서도 계산기 컴포넌트가
+  // 계속 마운트된 채로 남아있다 — 모바일에서 바텀시트를 열면 두 번째 GeoGebra 인스턴스가
+  // 동시에 뜨게 되는데, 실제로 테스트해보니 같은 페이지에 GeoGebra 인스턴스가 여러 개
+  // 동시에 존재하면 렌더링이 불안정해졌다(화면이 비는 경우 발생). 그래서 데스크톱 패널
+  // 자체를 이 상태로 조건부 마운트해 항상 하나만 존재하게 한다.
+  const [isDesktopViewport, setIsDesktopViewport] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const handleChange = e => setIsDesktopViewport(e.matches)
+    mq.addEventListener('change', handleChange)
+    return () => mq.removeEventListener('change', handleChange)
+  }, [])
+
+  // 계산기 패널 폭을 드래그로 조절 — splitRef(왼쪽 작성 영역 + 계산기를 함께 감싼 flex 행)의
+  // 오른쪽 끝에서 포인터 x좌표까지의 거리를 그대로 계산기 폭으로 쓴다.
+  // GeoGebra는 컨테이너가 주입되는 "그 순간" 크기에만 맞추고 이후 크기 변화는 따라가지
+  // 않는다(CalculatorPanel.jsx 상단 주석 참고 — 실제로 여러 방법을 시도했지만 실시간
+  // 리사이즈는 신뢰할 수 없었음). 그래서 패널 폭(calcPanelWidth)은 드래그 중 매끄럽게
+  // 바뀌지만, CalculatorPanel 자체는 손을 뗀 시점(calcPanelCommittedWidth)에만 key를 바꿔
+  // 새로 마운트해서 깔끔하게 다시 맞춘다 — 드래그 중에는 계산기 크기가 그대로 있다가, 놓는
+  // 순간 한 번에 맞는 크기로 다시 그려진다.
+  const splitRef = useRef(null)
+  const draggingRef = useRef(false)
+  const calcWidthRef = useRef(340)
+  const [calcPanelWidth, setCalcPanelWidth] = useState(340)
+  const [calcPanelCommittedWidth, setCalcPanelCommittedWidth] = useState(340)
+  const MIN_CALC_WIDTH = 260
+  const MAX_CALC_WIDTH = 640
+
+  function handleDividerPointerDown(e) {
+    draggingRef.current = true
+    e.currentTarget.setPointerCapture(e.pointerId)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+  function handleDividerPointerMove(e) {
+    if (!draggingRef.current || !splitRef.current) return
+    const rect = splitRef.current.getBoundingClientRect()
+    const nextWidth = Math.min(MAX_CALC_WIDTH, Math.max(MIN_CALC_WIDTH, rect.right - e.clientX))
+    calcWidthRef.current = nextWidth
+    setCalcPanelWidth(nextWidth)
+  }
+  function handleDividerPointerUp(e) {
+    draggingRef.current = false
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    setCalcPanelCommittedWidth(calcWidthRef.current)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -70,7 +132,7 @@ export default function EssayWritePage() {
         }
         setNeedsIdentity(false)
 
-        // 지문은 이제 선택 사항이다 — structured 응답은 지문 없이 배정될 수 있다.
+        // 지문은 이제 선택 사항이다 — structured/essay_calculator 응답은 지문 없이 배정될 수 있다.
         let p = null
         if (a.passageId) {
           try {
@@ -82,7 +144,7 @@ export default function EssayWritePage() {
         }
 
         let tpl = null
-        if (a.responseType === 'structured') {
+        if (a.responseType === 'structured' || a.responseType === 'essay_calculator') {
           try {
             tpl = await getTemplate(a.templateId)
           } catch (err) {
@@ -96,7 +158,8 @@ export default function EssayWritePage() {
           sub = await getOrCreateSubmission(assignmentId, {
             uid: user.uid,
             name: userInfo?.name || user.displayName || '',
-            class: userInfo?.class || ''
+            class: userInfo?.class || '',
+            email: user.email || ''
           }, a.createdBy, tpl?.sections)
         } catch (err) {
           throw new Error(`내 작성 공간 생성 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
@@ -141,7 +204,7 @@ export default function EssayWritePage() {
   const locked = submission?.status === 'submitted' || assignment?.status === 'closed'
 
   const { saveState, trigger, flushNow } = useAutosave(async (value) => {
-    if (isStructured) {
+    if (usesSections) {
       const withAiFlags = Object.fromEntries(
         Object.entries(value).map(([id, ans]) => [id, { ...ans, aiFlags: scanText(htmlToPlainText(ans.text || '')) }])
       )
@@ -154,6 +217,18 @@ export default function EssayWritePage() {
   }, { delay: 700 })
 
   const { logInput, logKeydown, logPaste, flushNow: flushLogs } = useEssayLogger(submission?.id)
+  const { updateTyping } = usePresence({ assignmentId, uid: user?.uid, enabled: !locked })
+
+  // 작성 로그(리플레이용)와 presence("입력 중" 표시)는 같은 입력 이벤트에서 함께 갱신한다 —
+  // 로깅 자체는 useEssayLogger가, 실시간 "입력 중" 표시는 usePresence가 각자 책임진다.
+  function handleLogInput(entry) {
+    logInput(entry)
+    updateTyping()
+  }
+  function handleLogKeydown(k, sectionId) {
+    logKeydown(k, sectionId)
+    updateTyping()
+  }
 
   function handleTextChange(value) {
     setText(value)
@@ -165,15 +240,15 @@ export default function EssayWritePage() {
     if (!locked) trigger(nextSections)
   }
 
-  const requiredMissing = isStructured
+  const requiredMissing = usesSections
     ? (template?.sections || []).filter(s => s.required && !htmlToPlainText(sections[s.id]?.text || '').trim())
     : []
-  const canSubmit = isStructured
+  const canSubmit = usesSections
     ? requiredMissing.length === 0
     : htmlToPlainText(text).trim().length > 0
 
   async function handleSubmit() {
-    if (isStructured && requiredMissing.length > 0) {
+    if (usesSections && requiredMissing.length > 0) {
       alert(`아직 채우지 않은 필수 항목이 있습니다: ${requiredMissing.map(s => s.heading || s.groupLabel).join(', ')}`)
       return
     }
@@ -182,7 +257,7 @@ export default function EssayWritePage() {
     try {
       await flushNow()
       await flushLogs()
-      if (isStructured) {
+      if (usesSections) {
         const withAiFlags = Object.fromEntries(
           Object.entries(sections).map(([id, ans]) => [id, { ...ans, aiFlags: scanText(htmlToPlainText(ans.text || '')) }])
         )
@@ -266,6 +341,15 @@ export default function EssayWritePage() {
   const isPastDue = assignment.dueAt?.toDate ? assignment.dueAt.toDate() < new Date() : false
   const wordLimit = assignment.wordLimit || passage?.wordLimitGuide || 800
 
+  // 채점 결과는 essay_calculator이고 교사가 공개(scoreReleased)했을 때만 보여준다 — 저장은
+  // 미리 해둬도 "공개" 전까지는 학생 화면에 나타나지 않는다(services/essay.js의 saveGrading/
+  // setScoreReleased가 서로 다른 동작인 이유).
+  const showScores = isEssayCalculatorType && submission?.scoreReleased
+  const sectionScores = showScores
+    ? Object.fromEntries((template?.sections || []).map(sec => [sec.id, { score: submission.sections?.[sec.id]?.score ?? null, maxScore: sec.maxScore ?? null }]))
+    : null
+  const totalMaxScore = (template?.sections || []).reduce((sum, s) => sum + (s.maxScore || 0), 0)
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm sticky top-0 z-10">
@@ -285,6 +369,11 @@ export default function EssayWritePage() {
           {locked && (
             <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">✅ 제출 완료</span>
           )}
+          {showScores && (
+            <span className="text-xs bg-indigo-100 text-indigo-700 rounded-full px-3 py-1 font-medium">
+              총점 {submission.totalScore ?? 0}{totalMaxScore > 0 ? ` / ${totalMaxScore}` : ''}
+            </span>
+          )}
         </div>
       </header>
 
@@ -292,70 +381,137 @@ export default function EssayWritePage() {
       <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2 text-center">
         <p className="text-xs text-indigo-700">
           본인이 직접 작성해야 하며, 작성 과정이 함께 기록됩니다.{' '}
-          {isStructured ? '각 항목의 안내에 따라 빠짐없이 작성해주세요.' : `목표 분량은 ${wordLimit}자 내외입니다.`}
+          {usesSections ? '각 항목의 안내에 따라 빠짐없이 작성해주세요.' : `목표 분량은 ${wordLimit}자 내외입니다.`}
           {isPastDue && !locked && <span className="text-red-600 font-medium"> · 마감일이 지났습니다.</span>}
         </p>
       </div>
 
-      <main className="flex-1 p-4 max-w-6xl mx-auto w-full min-h-0">
-        <div className={passage ? 'grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-160px)]' : ''}>
-          {/* min-h-0: flex/grid 항목은 기본적으로 내용 높이만큼 늘어나려 해서, 지정한 높이(h-full) 안에서
-              PassageViewer 자체의 overflow-y-auto가 실제로 동작하려면 이 min-h-0이 꼭 필요하다. */}
-          {passage && (
-            <div className="min-h-0 h-[50vh] lg:h-full">
-              <PassageViewer passage={passage} />
-            </div>
-          )}
-          {/* overflow-y-auto: 지문이 있는 배정은 왼쪽(지문)과 오른쪽(작성 영역)을 각각 독립적으로
-              스크롤시킨다. 오른쪽 칸(질문+입력창+제출 버튼)이 배정된 높이(h-[60vh]/lg:h-full)를
-              넘으면 이 칸만 스크롤되고, 왼쪽 지문 칸은 그 위의 min-h-0/h-full로 따로 스크롤된다.
-              입력창(EssayEditor)은 autoResize로 내부 스크롤 없이 글자 수만큼 길어지므로, 넘친
-              내용을 보려면 이 칸을 스크롤하면 된다 — 제출 버튼도 입력창 바로 아래에 같은 칸
-              안에 있어 함께 스크롤된다. */}
-          <div className={passage ? 'flex flex-col min-h-0 h-[60vh] lg:h-full overflow-y-auto' : 'flex flex-col'}>
-            {passage?.questionPrompt && (
-              <div className="flex-shrink-0 rounded-xl bg-indigo-50 border border-indigo-100 p-3 mb-3">
-                <p className="text-xs font-bold text-indigo-700 mb-1">📝 논술 문항</p>
-                <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{passage.questionPrompt}</p>
+      <main className={`flex-1 p-4 mx-auto w-full min-h-0 ${calculatorEnabled ? 'max-w-[1440px]' : 'max-w-6xl'}`}>
+        {/* calculatorEnabled일 때만 오른쪽에 계산기 칼럼을 위한 flex 래퍼를 씌운다 — 아래
+            지문/작성 영역 그리드 자체의 내부 구조는 그대로 두고 감싸기만 해서, 계산기가 없는
+            일반 배정의 레이아웃/DOM은 예전과 동일하게 유지된다. */}
+        <div ref={splitRef} className={calculatorEnabled ? 'flex flex-col lg:flex-row lg:gap-0 gap-5 items-start' : ''}>
+          <div className={calculatorEnabled ? 'min-w-0 flex-1' : ''}>
+            <div className={passage ? 'grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-160px)]' : ''}>
+              {/* min-h-0: flex/grid 항목은 기본적으로 내용 높이만큼 늘어나려 해서, 지정한 높이(h-full) 안에서
+                  PassageViewer 자체의 overflow-y-auto가 실제로 동작하려면 이 min-h-0이 꼭 필요하다. */}
+              {passage && (
+                <div className="min-h-0 h-[50vh] lg:h-full">
+                  <PassageViewer passage={passage} />
+                </div>
+              )}
+              {/* overflow-y-auto: 지문이 있는 배정은 왼쪽(지문)과 오른쪽(작성 영역)을 각각 독립적으로
+                  스크롤시킨다. 오른쪽 칸(질문+입력창+제출 버튼)이 배정된 높이(h-[60vh]/lg:h-full)를
+                  넘으면 이 칸만 스크롤되고, 왼쪽 지문 칸은 그 위의 min-h-0/h-full로 따로 스크롤된다.
+                  입력창(EssayEditor)은 autoResize로 내부 스크롤 없이 글자 수만큼 길어지므로, 넘친
+                  내용을 보려면 이 칸을 스크롤하면 된다 — 제출 버튼도 입력창 바로 아래에 같은 칸
+                  안에 있어 함께 스크롤된다. */}
+              <div className={passage ? 'flex flex-col min-h-0 h-[60vh] lg:h-full overflow-y-auto' : 'flex flex-col'}>
+                {passage?.questionPrompt && (
+                  <div className="flex-shrink-0 rounded-xl bg-indigo-50 border border-indigo-100 p-3 mb-3">
+                    <p className="text-xs font-bold text-indigo-700 mb-1">📝 논술 문항</p>
+                    <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{passage.questionPrompt}</p>
+                  </div>
+                )}
+
+                {usesSections ? (
+                  <StructuredReportEditor
+                    template={template}
+                    sections={sections}
+                    onChange={handleSectionsChange}
+                    disabled={locked}
+                    logInput={handleLogInput}
+                    logKeydown={handleLogKeydown}
+                    logPaste={logPaste}
+                    scores={sectionScores}
+                  />
+                ) : (
+                  <EssayEditor
+                    value={text}
+                    onChange={handleTextChange}
+                    disabled={locked}
+                    wordLimitGuide={wordLimit}
+                    onLogInput={handleLogInput}
+                    onLogKeydown={handleLogKeydown}
+                    onLogPaste={logPaste}
+                  />
+                )}
+
+                {/* 제출 버튼은 입력창 바로 아래, 이 칸(작성 영역) 안에 함께 있다 — 입력창이
+                    autoResize로 길어지면 버튼도 같이 내려가고, 화면을 넘으면 이 칸 자체가
+                    overflow-y-auto로 스크롤되면서 버튼도 함께 스크롤된다. 왼쪽 지문 칸은
+                    별도 높이/스크롤을 가진 형제라 이 칸과 독립적으로 스크롤된다. */}
+                {!locked && (
+                  <button
+                    onClick={handleSubmit}
+                    disabled={submitting || !canSubmit}
+                    className="mt-3 flex-shrink-0 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-40 transition-colors active:scale-95"
+                  >
+                    {submitting ? '제출 중...' : '제출하기'}
+                  </button>
+                )}
               </div>
-            )}
-
-            {isStructured ? (
-              <StructuredReportEditor
-                template={template}
-                sections={sections}
-                onChange={handleSectionsChange}
-                disabled={locked}
-                logInput={logInput}
-                logKeydown={logKeydown}
-                logPaste={logPaste}
-              />
-            ) : (
-              <EssayEditor
-                value={text}
-                onChange={handleTextChange}
-                disabled={locked}
-                wordLimitGuide={wordLimit}
-                onLogInput={logInput}
-                onLogKeydown={logKeydown}
-                onLogPaste={logPaste}
-              />
-            )}
-
-            {/* 제출 버튼은 입력창 바로 아래, 이 칸(작성 영역) 안에 함께 있다 — 입력창이
-                autoResize로 길어지면 버튼도 같이 내려가고, 화면을 넘으면 이 칸 자체가
-                overflow-y-auto로 스크롤되면서 버튼도 함께 스크롤된다. 왼쪽 지문 칸은
-                별도 높이/스크롤을 가진 형제라 이 칸과 독립적으로 스크롤된다. */}
-            {!locked && (
-              <button
-                onClick={handleSubmit}
-                disabled={submitting || !canSubmit}
-                className="mt-3 flex-shrink-0 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-40 transition-colors active:scale-95"
-              >
-                {submitting ? '제출 중...' : '제출하기'}
-              </button>
-            )}
+            </div>
           </div>
+
+          {calculatorEnabled && (
+            <>
+              {/* 데스크톱(lg 이상)에서만 보이는 드래그 구분선 — 가운데 얇은 손잡이를 좌우로
+                  끌면 패널 폭(calcPanelWidth)이 매끄럽게 바뀌고, 손을 뗄 때(calcPanelCommittedWidth)
+                  CalculatorPanel이 새 key로 다시 마운트되면서 그 폭에 맞게 깔끔하게 다시 그려진다. */}
+              <div
+                className="hidden lg:flex w-3 flex-shrink-0 cursor-col-resize touch-none items-stretch justify-center self-stretch"
+                style={{ height: 'calc(100vh - 160px)' }}
+                onPointerDown={handleDividerPointerDown}
+                onPointerMove={handleDividerPointerMove}
+                onPointerUp={handleDividerPointerUp}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="계산기 폭 조절"
+              >
+                <div className="my-4 w-1 rounded-full bg-gray-200 hover:bg-indigo-300" />
+              </div>
+
+              {/* 데스크톱(lg 이상): 항상 보이는 오른쪽 패널, 폭은 calcPanelWidth(드래그로 조절).
+                  CalculatorPanel 자체를 isDesktopViewport로 조건부 마운트한다(위 주석 참고) —
+                  GeoGebra 인스턴스가 모바일 바텀시트와 동시에 두 개 뜨지 않게. key를
+                  calcPanelCommittedWidth로 줘서 드래그가 끝난 폭으로 다시 마운트되게 한다. */}
+              <div
+                className="hidden lg:block shrink-0 sticky top-4 h-[calc(100vh-160px)]"
+                style={{ width: calcPanelWidth }}
+              >
+                {isDesktopViewport && <CalculatorPanel key={calcPanelCommittedWidth} />}
+              </div>
+
+              {/* 모바일/좁은 태블릿(lg 미만): 플로팅 버튼 + 바텀시트로 열고 닫음 */}
+              <button
+                type="button"
+                onClick={() => setCalculatorSheetOpen(true)}
+                className="fixed bottom-5 right-5 z-[1300] flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-2xl text-white shadow-lg transition-transform hover:bg-indigo-700 active:scale-95 lg:hidden"
+                aria-label="공학용 계산기 열기"
+              >
+                🧮
+              </button>
+
+              {calculatorSheetOpen && (
+                <div
+                  className="fixed inset-0 z-[1400] flex items-end justify-center bg-slate-900/35 p-3 sm:items-center lg:hidden"
+                  role="presentation"
+                  onMouseDown={e => { if (e.target === e.currentTarget) setCalculatorSheetOpen(false) }}
+                >
+                  <div className="flex h-[72vh] max-h-[620px] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" role="dialog" aria-modal="true" aria-label="공학용 계산기">
+                    <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-100 px-4 py-2">
+                      <p className="text-sm font-bold text-gray-800">🧮 공학용 계산기</p>
+                      <button type="button" onClick={() => setCalculatorSheetOpen(false)} className="text-xl text-slate-400 hover:text-slate-700" aria-label="계산기 닫기">×</button>
+                    </div>
+                    <div className="min-h-0 flex-1 p-2">
+                      <CalculatorPanel />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </main>
     </div>

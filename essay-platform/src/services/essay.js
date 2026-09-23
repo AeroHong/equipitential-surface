@@ -109,8 +109,15 @@ export async function listAssignmentsUsingPassage(passageId) {
 
 /**
  * 배정 생성 (createdBy는 현재 로그인 계정 — 이 배정으로 생기는 제출물도 같은 teacherUid를 갖는다)
- * @param {object} data {passageId, title, dueAt, wordLimit, responseType, templateId}
- *   responseType: 'essay'(기본, passageId 필수) | 'structured'(templateId 필수, passageId 선택)
+ * @param {object} data {passageId, title, dueAt, wordLimit, responseType, templateId, calculatorEnabled}
+ *   responseType: 'essay'(기본, passageId 필수, 자유서술 한 칸) |
+ *     'essay_calculator'("서술형 평가-문항", templateId 필수 + passageId 선택 — structured와
+ *     동일하게 양식 문항별로 답변하고 채점 기능이 딸려 있음. 과목 무관하게 쓰는 문항형
+ *     서술평가에 사용) |
+ *     'structured'(templateId 필수, passageId 선택, 양식 항목별 작성, 채점 없음)
+ *   calculatorEnabled: responseType이 'essay_calculator'일 때만 의미 있는 별도 체크박스 —
+ *     계산이 필요한 과목만 켠다(과목 무관 플랫폼이라 "서술형 평가-문항"을 고른다고 계산기가
+ *     자동으로 붙지는 않음). 그 외 responseType에서는 항상 false로 저장.
  * @returns {Promise<string>} assignmentId
  */
 /** 이메일의 @ 뒤 도메인만 뽑는다(없으면 빈 문자열) — 학생 계정이 배정을 만든 교사와 같은
@@ -125,6 +132,7 @@ export async function createAssignment(data) {
     passageId: data.passageId || null,
     responseType: data.responseType || 'essay',
     templateId: data.templateId || null,
+    calculatorEnabled: !!data.calculatorEnabled,
     title: data.title || '',
     dueAt: data.dueAt || null,
     wordLimit: data.wordLimit || null,
@@ -154,6 +162,20 @@ export async function updateAssignment(assignmentId, data) {
     teacherDomain: emailDomain(auth.currentUser?.email),
     updatedAt: serverTimestamp()
   })
+}
+
+/**
+ * assignment.classrooms(배열, 신규)와 assignment.classroom(단일 객체, 구버전) 중 있는 쪽을
+ * 항상 배열로 정규화해서 돌려준다 — 한 배정을 여러 Classroom 수업에 동시 게시할 수 있게
+ * 되면서 필드를 배열로 바꿨는데, 기존에 만들어진 배정은 여전히 단일 classroom 필드만
+ * 갖고 있어서(마이그레이션 스크립트 없이) 읽는 쪽에서 이 함수로 통일한다.
+ * @param {object} assignment
+ * @returns {Array<object>} 게시된 적 없으면 빈 배열
+ */
+export function getAssignmentClassrooms(assignment) {
+  if (Array.isArray(assignment?.classrooms)) return assignment.classrooms
+  if (assignment?.classroom) return [assignment.classroom]
+  return []
 }
 
 /**
@@ -223,13 +245,16 @@ const emptySectionAnswer = () => ({
   pastedCharTotal: 0,
   keydownCount: 0,
   inputEventCount: 0,
-  aiFlags: { phraseMatches: [], markdownHits: false, score: 0 }
+  aiFlags: { phraseMatches: [], markdownHits: false, score: 0 },
+  score: null // 채점 점수('essay_calculator'만 사용) — saveGrading()이 채운다
 })
 
 /**
  * 제출물 문서를 없으면 생성하고(upsert), 항상 최신 데이터를 반환
  * @param {string} assignmentId
- * @param {{uid: string, name: string, class: string}} student
+ * @param {{uid: string, name: string, class: string, email?: string}} student email은 Classroom
+ *   로스터와 매칭해 "어느 반 학생인지" 그룹으로 보여주는 데 쓴다(AssignmentDashboard.jsx) —
+ *   없어도 다른 기능엔 지장 없고, 그 학생만 "매칭 안 됨"으로 분류된다.
  * @param {string} teacherUid 이 배정을 만든 교사 uid(essayAssignments.createdBy) — 제출물에도
  *   그대로 찍어둬야 그 교사의 대시보드 list 쿼리가 firestore.rules를 통과한다.
  * @param {Array<{id:string}>} [templateSections] 구조화된 응답(reportTemplates.sections)이면
@@ -249,6 +274,7 @@ export async function getOrCreateSubmission(assignmentId, student, teacherUid, t
     studentUid: student.uid,
     studentName: student.name || '',
     studentClass: student.class || '',
+    studentEmail: student.email || '',
     charCount: 0,
     status: 'draft',
     startedAt: serverTimestamp(),
@@ -351,6 +377,57 @@ export async function reopenSubmission(subId) {
     status: 'draft',
     updatedAt: serverTimestamp()
   })
+}
+
+// ─── 채점 ('essay_calculator'만 사용) ───────────────────────────
+//
+// 학생은 자기 제출물 문서를 읽을 권한이 이미 있어서(firestore.rules) sections.*.score 필드
+// 자체를 서버 단에서 숨길 수는 없다 — aiFlags/pasteCount 등 기존 교사 전용 필드들과 같은
+// 전제. scoreReleased는 어디까지나 "학생 화면 UI가 점수를 보여줄지"를 결정하는 값이고,
+// 문서 자체의 필드 단위 보안은 아니다(devtools로 직접 열어보면 비공개여도 값은 있다).
+
+/**
+ * 문항별 점수 저장(부분 저장 가능 — 아직 안 매긴 문항은 sectionScores에서 빼고 부르면 된다).
+ * @param {string} subId
+ * @param {Record<string, number|null>} sectionScores {sectionId: score}
+ */
+export async function saveGrading(subId, sectionScores) {
+  const updates = {}
+  for (const [sectionId, score] of Object.entries(sectionScores)) {
+    updates[`sections.${sectionId}.score`] = score
+  }
+  updates.totalScore = Object.values(sectionScores).reduce((sum, s) => sum + (Number(s) || 0), 0)
+  updates.gradedAt = serverTimestamp()
+  updates.gradedBy = auth.currentUser?.uid || ''
+  updates.updatedAt = serverTimestamp()
+  await updateDoc(doc(db, 'essaySubmissions', subId), updates)
+}
+
+/**
+ * 채점 결과(점수)를 학생 화면에 보여줄지 켜고 끈다. 저장(saveGrading)과 별개 동작 — 교사가
+ * 채점을 다 마치기 전까지는 저장만 하고 공개하지 않을 수 있게 분리했다.
+ * @param {string} subId
+ * @param {boolean} released
+ */
+export async function setScoreReleased(subId, released) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), {
+    scoreReleased: released,
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 여러 제출물의 채점 공개 여부를 한 번에 바꾼다 (대시보드의 "전체 공개/비공개" 버튼용).
+ * @param {string[]} submissionIds
+ * @param {boolean} released
+ */
+export async function releaseScores(submissionIds, released) {
+  if (submissionIds.length === 0) return
+  const batch = writeBatch(db)
+  for (const id of submissionIds) {
+    batch.update(doc(db, 'essaySubmissions', id), { scoreReleased: released, updatedAt: serverTimestamp() })
+  }
+  await batch.commit()
 }
 
 /**

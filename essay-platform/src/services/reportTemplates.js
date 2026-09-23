@@ -25,6 +25,8 @@ import { auth, db } from '../firebase.js'
  * @property {string} guidance    학생에게 보여줄 안내 문구
  * @property {boolean} required
  * @property {number|null} wordLimitGuide
+ * @property {number|null} maxScore  배점(선택) — 'essay_calculator' 배정의 채점(services/essay.js
+ *   의 saveGrading)에서 이 섹션의 만점으로 쓰인다. structured 배정에 쓰이는 템플릿이면 무시됨.
  */
 
 /**
