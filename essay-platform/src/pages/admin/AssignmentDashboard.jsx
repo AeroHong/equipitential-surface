@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ref, onValue } from 'firebase/database'
 import { useAuth } from '../../App.jsx'
-import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms } from '../../services/essay.js'
+import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, resetExamStart } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
@@ -30,6 +30,11 @@ function formatTime(ts) {
   return d.toLocaleDateString('ko-KR')
 }
 
+function formatClock(ts) {
+  const d = ts?.toDate ? ts.toDate() : new Date(ts)
+  return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+}
+
 export default function AssignmentDashboard() {
   const { assignmentId } = useParams()
   const navigate = useNavigate()
@@ -53,6 +58,7 @@ export default function AssignmentDashboard() {
   const [classroomCounts, setClassroomCounts] = useState({})
   const [fetchingCountFor, setFetchingCountFor] = useState(null) // 지금 조회 중인 courseId
   const [releasingAll, setReleasingAll] = useState(false)
+  const [startingExam, setStartingExam] = useState(false)
   const [syncingFor, setSyncingFor] = useState(null) // 지금 설명을 다시 동기화 중인 courseId
   // 제출자 이메일 ↔ 소속 수업 매칭 — "명단 불러오기"를 눌러야 채워진다(Classroom 로그인
   // 필요). 안 눌러도 나머지 기능엔 지장 없고, 그냥 반별 필터/구분 표시가 안 될 뿐이다.
@@ -123,6 +129,28 @@ export default function AssignmentDashboard() {
     const nextStatus = assignment.status === 'closed' ? 'open' : 'closed'
     await updateAssignment(assignmentId, { status: nextStatus })
     setAssignment(a => ({ ...a, status: nextStatus }))
+  }
+
+  // 대기실(waitingRoomEnabled) 배정 전용 — 학생 화면은 배정 문서를 실시간 구독하고 있어서
+  // examStartedAt이 채워지는 즉시 문항을 불러온다.
+  async function handleStartExam() {
+    if (!window.confirm('평가를 시작할까요? 접속 중인 모든 학생 화면에 바로 문항이 나타납니다.')) return
+    setStartingExam(true)
+    try {
+      await startExam(assignmentId)
+      setAssignment(a => ({ ...a, examStartedAt: new Date() }))
+    } catch (err) {
+      console.error('평가 시작 실패:', err)
+      alert('평가 시작 중 오류가 발생했습니다.')
+    } finally {
+      setStartingExam(false)
+    }
+  }
+
+  async function handleResetExamStart() {
+    if (!window.confirm('대기실로 되돌릴까요? 이미 문항을 받은 학생 화면은 그대로이고, 새로 접속하는 학생만 다시 대기실을 보게 됩니다.')) return
+    await resetExamStart(assignmentId)
+    setAssignment(a => ({ ...a, examStartedAt: null }))
   }
 
   async function handleCopyStudentLink() {
@@ -295,6 +323,8 @@ export default function AssignmentDashboard() {
     ? submissions
     : submissions.filter(sub => courseIdForSubmission(sub) === groupFilter)
   // 반 필터를 골랐으면 상단 "제출 X/Y" 통계도 그 반 기준으로 보여준다.
+  // 대기실 단계엔 아직 제출물 문서가 없으므로(평가 시작 후에 만든다) 접속 인원은 presence로 센다.
+  const waitingCount = Object.values(presenceMap).filter(p => p?.state && p.state !== 'offline').length
   const submittedCount = filteredSubmissions.filter(s => s.status === 'submitted').length
 
   const isStructured = assignment?.responseType === 'structured'
@@ -356,6 +386,29 @@ export default function AssignmentDashboard() {
           <p className="text-xs text-gray-500">{passage?.title || (isStructured ? template?.title : '')}</p>
         </div>
         <div className="ml-auto flex items-center gap-3">
+          {assignment?.waitingRoomEnabled && (
+            assignment.examStartedAt ? (
+              <>
+                <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">
+                  평가 진행 중 · {formatClock(assignment.examStartedAt)} 시작
+                </span>
+                <button onClick={handleResetExamStart} className="text-xs text-gray-400 underline hover:text-gray-600">
+                  대기실로 되돌리기
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-amber-700">대기실 접속 {waitingCount}명</span>
+                <button
+                  onClick={handleStartExam}
+                  disabled={startingExam}
+                  className="rounded-lg bg-green-600 px-4 py-1.5 text-xs font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-40"
+                >
+                  {startingExam ? '시작하는 중...' : '▶ 평가 시작'}
+                </button>
+              </>
+            )
+          )}
           <span className="text-xs text-gray-500">제출 {submittedCount} / {filteredSubmissions.length}</span>
           {isGradable && submissions.length > 0 && (
             <>

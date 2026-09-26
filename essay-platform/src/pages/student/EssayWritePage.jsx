@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import {
-  getAssignment, getPassage, getOrCreateSubmission,
+  subscribeAssignment, getPassage, getOrCreateSubmission,
   saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections
 } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
@@ -17,6 +17,7 @@ import EssayEditor from '../../components/EssayEditor.jsx'
 import StructuredReportEditor from './StructuredReportEditor.jsx'
 import SaveStateLabel from '../../components/SaveStateLabel.jsx'
 import CalculatorPanel from '../../components/CalculatorPanel.jsx'
+import PracticePanel from './PracticePanel.jsx'
 
 export default function EssayWritePage() {
   const { assignmentId } = useParams()
@@ -34,7 +35,6 @@ export default function EssayWritePage() {
   const [submitting, setSubmitting] = useState(false)
 
   // 클래스룸 연동 없이 개인 구글 계정으로 접속한 경우에만 쓰는 학번·이름 수동 입력 상태.
-  const [needsIdentity, setNeedsIdentity] = useState(false)
   const [studentIdInput, setStudentIdInput] = useState('')
   const [studentNameInput, setStudentNameInput] = useState('')
   const [identityError, setIdentityError] = useState('')
@@ -102,36 +102,44 @@ export default function EssayWritePage() {
     setCalcPanelCommittedWidth(calcWidthRef.current)
   }
 
+  // 배정 문서는 일회성 조회가 아니라 실시간 구독한다 — 대기실(waitingRoomEnabled)에서 교사가
+  // "평가 시작"(examStartedAt)을 누르는 순간을 새로고침 없이 알아채야 하기 때문. 덤으로 교사가
+  // 마감(status: 'closed')하면 그 즉시 입력이 잠긴다.
   useEffect(() => {
+    if (!user) return
+    const unsub = subscribeAssignment(assignmentId, a => {
+      if (!a) setError('존재하지 않는 과제입니다.')
+      else setAssignment(a)
+      setLoading(false)
+    }, err => {
+      setError(`과제 정보 접근 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
+      setLoading(false)
+    })
+    return () => unsub()
+  }, [assignmentId, user])
+
+  // 클래스룸 연동 없이 개인 구글 계정으로 접속한 경우(=로그인 계정 도메인이 이 배정을
+  // 만든 교사의 도메인과 다름), 구글 표시 이름만으론 본인 확인이 안 되므로 학번·이름을
+  // 먼저 받는다. 한 번 입력하면 users/{uid}.manualIdentity에 저장되어(services/users.js)
+  // 다음부턴(다른 배정에서도) 다시 묻지 않는다. 같은 도메인이면 지금처럼 그대로 통과.
+  const studentDomain = user?.email?.includes('@') ? user.email.split('@')[1] : ''
+  const isForeignAccount = Boolean(assignment?.teacherDomain) && Boolean(studentDomain) && studentDomain !== assignment.teacherDomain
+  const needsIdentity = isForeignAccount && !userInfo?.manualIdentity
+
+  // 대기실: 교사가 평가를 시작하기 전엔 지문·양식을 아예 불러오지 않고 제출물도 만들지 않는다
+  // (startedAt이 실제 시작 시각을 가리키도록). 한 번 문항을 받은 뒤(submission 있음)엔 교사가
+  // "대기실로 되돌리기"를 눌러도 이미 작성 중인 화면을 빼앗지 않는다.
+  const waiting = Boolean(assignment?.waitingRoomEnabled && !assignment?.examStartedAt && !submission)
+  const readyToLoadContent = Boolean(assignment) && !needsIdentity && !waiting
+  const contentLoadStartedRef = useRef(false)
+
+  useEffect(() => {
+    if (!readyToLoadContent || contentLoadStartedRef.current) return
+    contentLoadStartedRef.current = true
+    const a = assignment
     let cancelled = false
-    async function load() {
+    async function loadContent() {
       try {
-        let a
-        try {
-          a = await getAssignment(assignmentId)
-        } catch (err) {
-          throw new Error(`과제 정보 접근 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
-        }
-        if (!a) {
-          if (!cancelled) { setError('존재하지 않는 과제입니다.'); setLoading(false) }
-          return
-        }
-        if (cancelled) return
-        setAssignment(a)
-
-        // 클래스룸 연동 없이 개인 구글 계정으로 접속한 경우(=로그인 계정 도메인이 이 배정을
-        // 만든 교사의 도메인과 다름), 구글 표시 이름만으론 본인 확인이 안 되므로 학번·이름을
-        // 먼저 받는다. 한 번 입력하면 users/{uid}.manualIdentity에 저장되어(services/users.js)
-        // 다음부턴(다른 배정에서도) 다시 묻지 않는다. 같은 도메인이면 지금처럼 그대로 통과.
-        const studentDomain = user.email?.includes('@') ? user.email.split('@')[1] : ''
-        const isForeignAccount = Boolean(a.teacherDomain) && Boolean(studentDomain) && studentDomain !== a.teacherDomain
-        if (isForeignAccount && !userInfo?.manualIdentity) {
-          setNeedsIdentity(true)
-          setLoading(false)
-          return
-        }
-        setNeedsIdentity(false)
-
         // 지문은 이제 선택 사항이다 — structured/essay_calculator 응답은 지문 없이 배정될 수 있다.
         let p = null
         if (a.passageId) {
@@ -173,13 +181,16 @@ export default function EssayWritePage() {
       } catch (err) {
         console.error('과제 로드 실패:', err)
         if (!cancelled) setError(err.message || '과제를 불러오지 못했습니다.')
-      } finally {
-        if (!cancelled) setLoading(false)
       }
     }
-    if (user) load()
-    return () => { cancelled = true }
-  }, [assignmentId, user, userInfo])
+    loadContent()
+    return () => {
+      cancelled = true
+      contentLoadStartedRef.current = false
+    }
+    // assignment 스냅샷이 바뀔 때마다(마감 등) 다시 불러오지 않도록, 로드 시작 조건만 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyToLoadContent, assignmentId, user])
 
   async function handleIdentitySubmit(e) {
     e.preventDefault()
@@ -191,8 +202,8 @@ export default function EssayWritePage() {
     setIdentityError('')
     try {
       await setManualStudentIdentity(user.uid, { studentId: studentIdInput, name: studentNameInput })
-      // users/{uid} 실시간 구독(App.jsx)이 userInfo를 갱신하면, 위 useEffect가 그 변화를 보고
-      // 자동으로 다시 실행되어 배정을 마저 불러온다 — 여기서 따로 다시 부를 필요가 없다.
+      // users/{uid} 실시간 구독(App.jsx)이 userInfo를 갱신하면 needsIdentity가 false로 바뀌고,
+      // 위 loadContent effect가 자동으로 배정을 마저 불러온다 — 여기서 따로 부를 필요가 없다.
     } catch (err) {
       console.error('학번·이름 저장 실패:', err)
       setIdentityError('저장 중 오류가 발생했습니다. 다시 시도해주세요.')
@@ -365,7 +376,10 @@ export default function EssayWritePage() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-3">
-          {!locked && <SaveStateLabel state={saveState} />}
+          {waiting && (
+            <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-3 py-1 font-medium">⏳ 평가 시작 대기 중</span>
+          )}
+          {!locked && !waiting && <SaveStateLabel state={saveState} />}
           {locked && (
             <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">✅ 제출 완료</span>
           )}
@@ -380,6 +394,7 @@ export default function EssayWritePage() {
       {/* 안내 배너 */}
       <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2 text-center">
         <p className="text-xs text-indigo-700">
+          {waiting ? '선생님이 평가를 시작하면 문항이 나타납니다. ' : ''}
           본인이 직접 작성해야 하며, 작성 과정이 함께 기록됩니다.{' '}
           {usesSections ? '각 항목의 안내에 따라 빠짐없이 작성해주세요.' : `목표 분량은 ${wordLimit}자 내외입니다.`}
           {isPastDue && !locked && <span className="text-red-600 font-medium"> · 마감일이 지났습니다.</span>}
@@ -392,6 +407,15 @@ export default function EssayWritePage() {
             일반 배정의 레이아웃/DOM은 예전과 동일하게 유지된다. */}
         <div ref={splitRef} className={calculatorEnabled ? 'flex flex-col lg:flex-row lg:gap-0 gap-5 items-start' : ''}>
           <div className={calculatorEnabled ? 'min-w-0 flex-1' : ''}>
+            {/* 대기실/로딩/본 화면을 이 칸 안에서만 바꾼다 — 오른쪽 계산기 칼럼은 그대로 마운트된 채
+                남아서, 평가가 시작돼도 연습하며 계산해둔 내용이 사라지지 않는다. */}
+            {waiting ? (
+              <PracticePanel calculatorEnabled={calculatorEnabled} />
+            ) : !submission ? (
+              <div className="flex items-center justify-center py-24">
+                <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : (
             <div className={passage ? 'grid grid-cols-1 lg:grid-cols-2 gap-5 lg:h-[calc(100vh-160px)]' : ''}>
               {/* min-h-0: flex/grid 항목은 기본적으로 내용 높이만큼 늘어나려 해서, 지정한 높이(h-full) 안에서
                   PassageViewer 자체의 overflow-y-auto가 실제로 동작하려면 이 min-h-0이 꼭 필요하다. */}
@@ -452,6 +476,7 @@ export default function EssayWritePage() {
                 )}
               </div>
             </div>
+            )}
           </div>
 
           {calculatorEnabled && (

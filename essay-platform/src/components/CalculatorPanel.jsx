@@ -44,7 +44,17 @@ function loadDeployScript() {
  *   실시간으로 크기가 늘어나 보이게 하려면 EssayWritePage.jsx가 드래그가 끝난 시점에 이
  *   컴포넌트를 다른 key로 새로 마운트해서 이 경로를 다시 타게 한다.
  */
+// GeoGebra는 넘긴 width/height보다 살짝 크게 그린다 — 특히 키패드를 ×로 닫은 뒤 나타나는
+// "키패드 다시 열기" 아이콘(35px)은 지정 높이보다 약 17px 아래까지 삐져나와(실측), 바깥
+// overflow-hidden에 잘려 안 보이게 되는 문제가 실제로 있었다(닫으면 다시 못 여는 것처럼
+// 보임). 그만큼 여유를 두고 주입한다.
+const WIDTH_SAFETY_MARGIN = 4
+const HEIGHT_SAFETY_MARGIN = 28
+
 export default function CalculatorPanel() {
+  // "다시 불러오기" 버튼이 이 값을 올려 GeoGebra를 새로 주입한다 — 화면이 꼬였을 때 학생
+  // 스스로 복구할 수 있는 마지막 수단(계산 기록은 초기화됨).
+  const [reloadKey, setReloadKey] = useState(0)
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, '')
   const containerId = `ggb-calc-${rawId}`
   const containerRef = useRef(null)
@@ -60,8 +70,8 @@ export default function CalculatorPanel() {
       injected = true
       const applet = new window.GGBApplet({
         appName: 'scientific',
-        width: Math.round(width) || 320,
-        height: Math.round(height) || 480,
+        width: Math.round(width - WIDTH_SAFETY_MARGIN) || 320,
+        height: Math.round(height - HEIGHT_SAFETY_MARGIN) || 480,
         showMenuBar: false,
         showToolBar: false,
         // scientific 앱에서는 이게 입력창 하나를 숨기는 옵션이 아니라 계산기 UI(키패드) 전체를
@@ -111,7 +121,7 @@ export default function CalculatorPanel() {
       // GGBApplet에는 공식 destroy API가 없어, 컨테이너를 비우는 방식으로 정리한다.
       if (containerRef.current) containerRef.current.innerHTML = ''
     }
-  }, [containerId])
+  }, [containerId, reloadKey])
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
@@ -126,11 +136,22 @@ export default function CalculatorPanel() {
             계산기를 불러오지 못했습니다. 네트워크 연결을 확인해주세요.
           </div>
         )}
-        <div id={containerId} ref={containerRef} className="h-full w-full" />
+        <div key={reloadKey} id={containerId} ref={containerRef} className="h-full w-full" />
       </div>
-      <p className="flex-shrink-0 border-t border-gray-100 px-2 py-1 text-center text-[10px] text-gray-300">
+      <div className="flex flex-shrink-0 items-center justify-between border-t border-gray-100 px-2 py-1 text-[10px] text-gray-300">
         <a href="https://www.geogebra.org" target="_blank" rel="noreferrer" className="hover:underline">Powered by GeoGebra</a>
-      </p>
+        <button
+          type="button"
+          onClick={() => {
+            if (!window.confirm('계산기를 다시 불러올까요? 지금까지의 계산 기록은 지워집니다.')) return
+            setStatus('loading')
+            setReloadKey(k => k + 1)
+          }}
+          className="rounded px-1.5 py-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        >
+          ↻ 계산기 다시 불러오기
+        </button>
+      </div>
     </div>
   )
 }

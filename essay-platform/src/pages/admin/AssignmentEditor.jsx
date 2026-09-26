@@ -18,6 +18,7 @@ export default function AssignmentEditor() {
   const isEdit = Boolean(assignmentId)
   const [responseType, setResponseType] = useState('essay')
   const [calculatorEnabled, setCalculatorEnabled] = useState(false)
+  const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false)
   const [passages, setPassages] = useState([])
   const [passageId, setPassageId] = useState('')
   const [templates, setTemplates] = useState([])
@@ -66,6 +67,7 @@ export default function AssignmentEditor() {
           const dueDate = assignment.dueAt?.toDate?.() || null
           setResponseType(assignment.responseType || 'essay')
           setCalculatorEnabled(!!assignment.calculatorEnabled)
+          setWaitingRoomEnabled(!!assignment.waitingRoomEnabled)
           setPassageId(assignment.passageId || '')
           setTemplateId(assignment.templateId || '')
           setTitle(assignment.title || '')
@@ -135,7 +137,8 @@ export default function AssignmentEditor() {
           dueAt,
           wordLimit: wordLimit ? Number(wordLimit) : null,
           status,
-          calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false
+          calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
+          waitingRoomEnabled
         })
         navigate(`/admin/assignments/${assignmentId}`)
         return
@@ -146,6 +149,7 @@ export default function AssignmentEditor() {
         passageId: responseType === 'essay' ? passageId : (passageId || null),
         templateId: usesTemplate ? templateId : null,
         calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
+        waitingRoomEnabled,
         title: title.trim(),
         dueAt,
         wordLimit: wordLimit ? Number(wordLimit) : null
@@ -276,6 +280,21 @@ export default function AssignmentEditor() {
             </div>
           </div>
         )}
+
+        {/* 대기실은 응답 유형과 무관하게 쓸 수 있다 — 계산기가 없는 배정이면 학생은 연습용
+            입력창만 보게 된다. */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3.5">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={waitingRoomEnabled}
+              onChange={e => setWaitingRoomEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300"
+            />
+            <span className="text-sm font-bold text-gray-800">⏳ 평가 시작 전 준비 시간(대기실) 사용</span>
+          </label>
+          <p className="mt-1.5 text-xs text-gray-400">켜면 학생은 접속해도 문항이 보이지 않고, 연습용 입력창{responseType === 'essay_calculator' && calculatorEnabled ? '과 공학용 계산기' : ''}만 써볼 수 있습니다. 대시보드에서 "평가 시작"을 누르는 순간 모든 학생 화면에 문항이 나타납니다.</p>
+        </div>
 
         {usesTemplate && (
           <div>

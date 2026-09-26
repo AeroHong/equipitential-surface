@@ -118,6 +118,8 @@ export async function listAssignmentsUsingPassage(passageId) {
  *   calculatorEnabled: responseType이 'essay_calculator'일 때만 의미 있는 별도 체크박스 —
  *     계산이 필요한 과목만 켠다(과목 무관 플랫폼이라 "서술형 평가-문항"을 고른다고 계산기가
  *     자동으로 붙지는 않음). 그 외 responseType에서는 항상 false로 저장.
+ *   waitingRoomEnabled: 켜면 학생은 교사가 "평가 시작"(startExam)을 누르기 전까지 문항 없이
+ *     연습용 입력창·계산기만 보는 대기실에 머문다. examStartedAt이 채워지는 순간 문항이 열린다.
  * @returns {Promise<string>} assignmentId
  */
 /** 이메일의 @ 뒤 도메인만 뽑는다(없으면 빈 문자열) — 학생 계정이 배정을 만든 교사와 같은
@@ -133,6 +135,8 @@ export async function createAssignment(data) {
     responseType: data.responseType || 'essay',
     templateId: data.templateId || null,
     calculatorEnabled: !!data.calculatorEnabled,
+    waitingRoomEnabled: !!data.waitingRoomEnabled,
+    examStartedAt: null,
     title: data.title || '',
     dueAt: data.dueAt || null,
     wordLimit: data.wordLimit || null,
@@ -187,6 +191,41 @@ export async function getAssignment(assignmentId) {
   const snap = await getDoc(doc(db, 'essayAssignments', assignmentId))
   if (!snap.exists()) return null
   return { id: snap.id, ...snap.data() }
+}
+
+/**
+ * 배정 단건 실시간 구독 — 학생 작성 화면이 대기실(waitingRoomEnabled) 상태에서 교사의
+ * "평가 시작"(examStartedAt)을 새로고침 없이 바로 알아채는 데 쓴다.
+ * @param {string} assignmentId
+ * @param {function(object|null): void} callback 문서가 없으면 null
+ * @param {function(Error): void} [onError]
+ * @returns {function} unsubscribe
+ */
+export function subscribeAssignment(assignmentId, callback, onError) {
+  return onSnapshot(doc(db, 'essayAssignments', assignmentId), (snap) => {
+    callback(snap.exists() ? { id: snap.id, ...snap.data() } : null)
+  }, (err) => {
+    console.error('배정 구독 실패:', err)
+    onError?.(err)
+  })
+}
+
+/**
+ * 대기실을 쓰는 배정의 평가를 시작한다 — 접속 중인 학생 화면이 subscribeAssignment로 이
+ * 값을 받아 곧바로 문항을 불러온다. 시각은 서버 기준으로 찍는다.
+ * @param {string} assignmentId
+ */
+export async function startExam(assignmentId) {
+  await updateAssignment(assignmentId, { examStartedAt: serverTimestamp() })
+}
+
+/**
+ * 실수로 시작했을 때 대기실로 되돌린다. 이미 문항을 받아간 학생 화면은 되돌려지지 않고,
+ * 새로 접속하는 학생만 다시 대기실을 보게 된다.
+ * @param {string} assignmentId
+ */
+export async function resetExamStart(assignmentId) {
+  await updateAssignment(assignmentId, { examStartedAt: null })
 }
 
 /**
