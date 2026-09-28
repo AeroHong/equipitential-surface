@@ -9,6 +9,9 @@ import AiFlagBadge from '../../components/AiFlagBadge.jsx'
 import PresenceBadge from '../../components/PresenceBadge.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
+import { getExamDeadlineMs } from '../../utils/examTimer.js'
+import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
+import ExamTimer from '../../components/ExamTimer.jsx'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, courseWorkExists, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
 
 /** handlePublishToClassroom과 반드시 같은 문구를 써야 한다 — "설명 동기화" 버튼이
@@ -53,6 +56,7 @@ export default function AssignmentDashboard() {
   // 배정에 아직 안 걸린 수업들 중 "추가로 게시"할 대상 — 여러 개 동시 선택 가능.
   const [selectedCourseIds, setSelectedCourseIds] = useState([])
   const [publishing, setPublishing] = useState(false)
+  const serverOffsetMs = useServerTimeOffset()
   const [checkingClassrooms, setCheckingClassrooms] = useState(false)
   // 나중에 게시할 때도 예약 게시(state: DRAFT + scheduledTime)를 걸 수 있다 — 배정 만들기
   // 화면(AssignmentEditor.jsx)과 같은 방식.
@@ -468,6 +472,10 @@ export default function AssignmentDashboard() {
                 <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">
                   평가 진행 중 · {formatClock(assignment.examStartedAt)} 시작
                 </span>
+                {/* 대기실 배정은 모든 학생이 같은 시각(examStartedAt)에 끝나므로 남은 시간을 하나로 보여준다. */}
+                {getExamDeadlineMs(assignment, null) != null && (
+                  <ExamTimer deadlineMs={getExamDeadlineMs(assignment, null)} serverOffsetMs={serverOffsetMs} />
+                )}
                 <button onClick={handleResetExamStart} className="text-xs text-gray-400 underline hover:text-gray-600">
                   대기실로 되돌리기
                 </button>
@@ -784,7 +792,7 @@ export default function AssignmentDashboard() {
                         <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${
                           sub.status === 'submitted' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                         }`}>
-                          {sub.status === 'submitted' ? '제출완료' : '작성중'}
+                          {sub.status === 'submitted' ? (sub.autoSubmitted ? '시간종료 제출' : '제출완료') : '작성중'}
                         </span>
                       </td>
                       <td className="px-4 py-3">

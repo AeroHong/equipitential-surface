@@ -22,6 +22,7 @@ export default function AssignmentEditor() {
   const [title, setTitle] = useState('')
   const [dueAtStr, setDueAtStr] = useState('')
   const [wordLimit, setWordLimit] = useState('')
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState('')
   const [status, setStatus] = useState('open')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(isEdit)
@@ -69,6 +70,7 @@ export default function AssignmentEditor() {
           setTitle(assignment.title || '')
           setDueAtStr(dueDate ? [dueDate.getFullYear(), String(dueDate.getMonth() + 1).padStart(2, '0'), String(dueDate.getDate()).padStart(2, '0')].join('-') : '')
           setWordLimit(assignment.wordLimit ?? '')
+          setTimeLimitMinutes(assignment.timeLimitMinutes ?? '')
           setStatus(assignment.status || 'open')
         } else if (!isEdit) {
           if (availablePassages.length) setPassageId(availablePassages[0].id)
@@ -121,6 +123,11 @@ export default function AssignmentEditor() {
     if (responseType === 'essay' && !passageId) { alert('지문을 선택해주세요.'); return }
     if (usesTemplate && !templateId) { alert('양식 또는 문항 세트를 선택해주세요.'); return }
     if (!title.trim()) { alert('배정 제목을 입력해주세요.'); return }
+    const parsedTimeLimit = timeLimitMinutes === '' ? null : Number(timeLimitMinutes)
+    if (parsedTimeLimit != null && (!Number.isFinite(parsedTimeLimit) || parsedTimeLimit <= 0)) {
+      alert('제한시간은 1분 이상으로 입력하거나 비워두세요.')
+      return
+    }
     if (!isEdit && classroomEnabled) {
       if (selectedCourseIds.length === 0) { alert('게시할 Classroom 수업을 하나 이상 선택해주세요.'); return }
       if (publishMode === 'scheduled' && !scheduledAtStr) { alert('예약 게시 시각을 입력해주세요.'); return }
@@ -145,7 +152,8 @@ export default function AssignmentEditor() {
           wordLimit: wordLimit ? Number(wordLimit) : null,
           status,
           calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
-          waitingRoomEnabled
+          waitingRoomEnabled,
+          timeLimitMinutes: parsedTimeLimit
         })
         navigate(`/admin/assignments/${assignmentId}`)
         return
@@ -157,6 +165,7 @@ export default function AssignmentEditor() {
         templateId: usesTemplate ? templateId : null,
         calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
         waitingRoomEnabled,
+        timeLimitMinutes: parsedTimeLimit,
         title: title.trim(),
         dueAt,
         wordLimit: wordLimit ? Number(wordLimit) : null
@@ -352,6 +361,42 @@ export default function AssignmentEditor() {
         <div>
           <label className={labelClass}>마감일 (선택)</label>
           <input type="date" className={inputClass} value={dueAtStr} onChange={e => setDueAtStr(e.target.value)} />
+        </div>
+
+        <div>
+          <label className={labelClass}>제한시간 (선택)</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min="1"
+              className={`${inputClass} max-w-[120px]`}
+              value={timeLimitMinutes}
+              onChange={e => setTimeLimitMinutes(e.target.value)}
+              placeholder="없음"
+            />
+            <span className="text-sm text-gray-500">분</span>
+            {[30, 45, 50, 60].map(m => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setTimeLimitMinutes(String(m))}
+                className={`rounded-lg border px-2.5 py-1 text-xs ${Number(timeLimitMinutes) === m ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+              >
+                {m}분
+              </button>
+            ))}
+            {timeLimitMinutes !== '' && (
+              <button type="button" onClick={() => setTimeLimitMinutes('')} className="text-xs text-gray-400 hover:text-gray-600 underline">
+                없음
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">
+            {waitingRoomEnabled
+              ? '대시보드에서 "평가 시작"을 누른 순간부터 모든 학생이 같은 시간을 잽니다.'
+              : '학생마다 처음 들어온 순간부터 잽니다. 모두 같은 시각에 시작하려면 위의 "평가 시작 전 준비 시간(대기실)"을 켜세요.'}
+            {' '}학생 화면에 남은 시간이 표시되고, 시간이 끝나면 그때까지 쓴 내용으로 자동 제출됩니다. 진행 중에 바꾸면 학생 화면에 바로 반영됩니다.
+          </p>
         </div>
 
         {responseType === 'essay' && (

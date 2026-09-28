@@ -120,6 +120,9 @@ export async function listAssignmentsUsingPassage(passageId) {
  *     자동으로 붙지는 않음). 그 외 responseType에서는 항상 false로 저장.
  *   waitingRoomEnabled: 켜면 학생은 교사가 "평가 시작"(startExam)을 누르기 전까지 문항 없이
  *     연습용 입력창·계산기만 보는 대기실에 머문다. examStartedAt이 채워지는 순간 문항이 열린다.
+ *   timeLimitMinutes: 제한시간(분, 없으면 null). 대기실을 쓰면 examStartedAt부터, 안 쓰면
+ *     학생별 제출물 startedAt부터 잰다(utils/examTimer.js의 getExamDeadlineMs). 시간이 다 되면
+ *     학생 화면이 그때까지 쓴 내용으로 자동 제출한다.
  * @returns {Promise<string>} assignmentId
  */
 /** 이메일의 @ 뒤 도메인만 뽑는다(없으면 빈 문자열) — 학생 계정이 배정을 만든 교사와 같은
@@ -137,6 +140,7 @@ export async function createAssignment(data) {
     calculatorEnabled: !!data.calculatorEnabled,
     waitingRoomEnabled: !!data.waitingRoomEnabled,
     examStartedAt: null,
+    timeLimitMinutes: data.timeLimitMinutes || null,
     title: data.title || '',
     dueAt: data.dueAt || null,
     wordLimit: data.wordLimit || null,
@@ -357,13 +361,15 @@ export async function saveSubmissionDraft(subId, data) {
  * 최종 제출 (잠금)
  * @param {string} subId
  * @param {{text: string, charCount: number, aiFlags: object}} data
+ * @param {{auto?: boolean}} [options] auto: 제한시간 종료로 자동 제출됨(대시보드 표시용)
  */
-export async function submitSubmission(subId, data) {
+export async function submitSubmission(subId, data, { auto = false } = {}) {
   await updateDoc(doc(db, 'essaySubmissions', subId), {
     text: data.text,
     charCount: data.charCount,
     aiFlags: data.aiFlags,
     status: 'submitted',
+    autoSubmitted: auto,
     submittedAt: serverTimestamp(),
     lastSavedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
@@ -391,12 +397,14 @@ export async function saveSectionsDraft(subId, sections) {
  * 필수 섹션이 비어있는지 같은 검증은 호출부(StructuredReportEditor)에서 미리 한다.
  * @param {string} subId
  * @param {Record<string, {text:string, charCount:number, aiFlags:object}>} sections
+ * @param {{auto?: boolean}} [options] auto: 제한시간 종료로 자동 제출됨(대시보드 표시용)
  */
-export async function submitSections(subId, sections) {
+export async function submitSections(subId, sections, { auto = false } = {}) {
   await updateDoc(doc(db, 'essaySubmissions', subId), {
     sections,
     charCount: sumSectionCharCounts(sections),
     status: 'submitted',
+    autoSubmitted: auto,
     submittedAt: serverTimestamp(),
     lastSavedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
@@ -408,12 +416,15 @@ function sumSectionCharCounts(sections) {
 }
 
 /**
- * 제출 잠금 해제 (교사 전용 — 재수정 허용)
+ * 제출 잠금 해제 (교사 전용 — 재수정 허용). 제한시간이 있는 배정이면 이미 시간이 지났을
+ * 테니, 다시 열어준 학생은 제한시간에서 빼준다(timeLimitWaived) — 안 그러면 여는 순간 학생
+ * 화면이 곧바로 다시 자동 제출해버린다.
  * @param {string} subId
  */
 export async function reopenSubmission(subId) {
   await updateDoc(doc(db, 'essaySubmissions', subId), {
     status: 'draft',
+    timeLimitWaived: true,
     updatedAt: serverTimestamp()
   })
 }

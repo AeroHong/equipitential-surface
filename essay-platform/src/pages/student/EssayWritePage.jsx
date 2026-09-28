@@ -18,6 +18,9 @@ import StructuredReportEditor from './StructuredReportEditor.jsx'
 import SaveStateLabel from '../../components/SaveStateLabel.jsx'
 import CalculatorPanel from '../../components/CalculatorPanel.jsx'
 import PracticePanel from './PracticePanel.jsx'
+import ExamTimer from '../../components/ExamTimer.jsx'
+import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
+import { getExamDeadlineMs } from '../../utils/examTimer.js'
 
 export default function EssayWritePage() {
   const { assignmentId } = useParams()
@@ -132,6 +135,11 @@ export default function EssayWritePage() {
   const waiting = Boolean(assignment?.waitingRoomEnabled && !assignment?.examStartedAt && !submission)
   const readyToLoadContent = Boolean(assignment) && !needsIdentity && !waiting
   const contentLoadStartedRef = useRef(false)
+  const serverOffsetMs = useServerTimeOffset()
+  const serverOffsetRef = useRef(0)
+  serverOffsetRef.current = serverOffsetMs
+  const loadedAtRef = useRef(null)
+  const [timeUp, setTimeUp] = useState(false)
 
   useEffect(() => {
     if (!readyToLoadContent || contentLoadStartedRef.current) return
@@ -173,6 +181,9 @@ export default function EssayWritePage() {
           throw new Error(`내 작성 공간 생성 실패: ${err.message || err.code || '권한 또는 네트워크 오류'}`)
         }
         if (cancelled) return
+        // 방금 만든 제출물은 startedAt이 serverTimestamp() 센티널이라 시각을 못 읽는다 —
+        // 대기실 없는 배정의 제한시간 기준으로 쓸 수 있게 지금(서버 기준) 시각을 기억해둔다.
+        loadedAtRef.current = Date.now() + serverOffsetRef.current
         setPassage(p)
         setTemplate(tpl)
         setSubmission(sub)
@@ -212,7 +223,16 @@ export default function EssayWritePage() {
     }
   }
 
-  const locked = submission?.status === 'submitted' || assignment?.status === 'closed'
+  // 제한시간: 교사가 다시 열어준 학생(timeLimitWaived)은 제외 — services/essay.js의 reopenSubmission 참고.
+  const deadlineMs = submission && !submission.timeLimitWaived
+    ? getExamDeadlineMs(assignment, submission, loadedAtRef.current)
+    : null
+  // 교사가 제한시간을 늘리거나 없애면(배정 실시간 구독) 아직 제출 전인 화면은 다시 풀린다.
+  useEffect(() => {
+    if (timeUp && (deadlineMs == null || deadlineMs > Date.now() + serverOffsetMs)) setTimeUp(false)
+  }, [deadlineMs, timeUp, serverOffsetMs])
+
+  const locked = submission?.status === 'submitted' || assignment?.status === 'closed' || timeUp
 
   const { saveState, trigger, flushNow } = useAutosave(async (value) => {
     if (usesSections) {
@@ -264,6 +284,10 @@ export default function EssayWritePage() {
       return
     }
     if (!window.confirm('제출하시겠어요? 제출 후에는 선생님이 다시 열어주기 전까지 수정할 수 없습니다.')) return
+    await submitNow({ auto: false })
+  }
+
+  async function submitNow({ auto }) {
     setSubmitting(true)
     try {
       await flushNow()
@@ -272,19 +296,32 @@ export default function EssayWritePage() {
         const withAiFlags = Object.fromEntries(
           Object.entries(sections).map(([id, ans]) => [id, { ...ans, aiFlags: scanText(htmlToPlainText(ans.text || '')) }])
         )
-        await submitSections(submission.id, withAiFlags)
+        await submitSections(submission.id, withAiFlags, { auto })
       } else {
         const plainText = htmlToPlainText(text)
         const aiFlags = scanText(plainText)
-        await submitSubmission(submission.id, { text, charCount: plainText.length, aiFlags })
+        await submitSubmission(submission.id, { text, charCount: plainText.length, aiFlags }, { auto })
       }
-      setSubmission(s => ({ ...s, status: 'submitted' }))
+      setSubmission(s => ({ ...s, status: 'submitted', autoSubmitted: auto }))
     } catch (err) {
       console.error('제출 실패:', err)
-      alert('제출 중 오류가 발생했습니다. 다시 시도해주세요.')
+      // 자동 제출 실패(주로 네트워크)는 화면을 잠근 채로 두고 조용히 다시 시도한다 — 여기서
+      // 풀어주면 시간이 지났는데도 계속 쓸 수 있게 된다.
+      if (auto) window.setTimeout(() => submitNowRef.current({ auto: true }), 5000)
+      else alert('제출 중 오류가 발생했습니다. 다시 시도해주세요.')
     } finally {
       setSubmitting(false)
     }
+  }
+  // 타이머 콜백과 재시도는 최신 작성 내용(sections/text)을 제출해야 해서 ref로 최신 함수를 잡는다.
+  const submitNowRef = useRef(submitNow)
+  submitNowRef.current = submitNow
+
+  // 제한시간 종료: 입력을 즉시 잠그고, 필수 항목·확인창 없이 지금까지 쓴 내용으로 제출한다.
+  function handleTimeExpired() {
+    if (submission?.status === 'submitted') return
+    setTimeUp(true)
+    submitNowRef.current({ auto: true })
   }
 
   if (loading) {
@@ -379,9 +416,20 @@ export default function EssayWritePage() {
           {waiting && (
             <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-3 py-1 font-medium">⏳ 평가 시작 대기 중</span>
           )}
+          {deadlineMs != null && submission?.status !== 'submitted' && assignment.status !== 'closed' && (
+            <ExamTimer deadlineMs={deadlineMs} serverOffsetMs={serverOffsetMs} onExpire={handleTimeExpired} />
+          )}
           {!locked && !waiting && <SaveStateLabel state={saveState} />}
-          {locked && (
-            <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">✅ 제출 완료</span>
+          {timeUp && submission?.status !== 'submitted' && (
+            <span className="text-xs bg-red-100 text-red-700 rounded-full px-3 py-1 font-medium">시간 종료 · 제출 중...</span>
+          )}
+          {submission?.status === 'submitted' && (
+            <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">
+              {submission.autoSubmitted ? '⏱ 시간 종료로 자동 제출됨' : '✅ 제출 완료'}
+            </span>
+          )}
+          {assignment.status === 'closed' && submission?.status !== 'submitted' && (
+            <span className="text-xs bg-gray-100 text-gray-600 rounded-full px-3 py-1 font-medium">마감됨</span>
           )}
           {showScores && (
             <span className="text-xs bg-indigo-100 text-indigo-700 rounded-full px-3 py-1 font-medium">
@@ -397,7 +445,12 @@ export default function EssayWritePage() {
           {waiting ? '선생님이 평가를 시작하면 문항이 나타납니다. ' : ''}
           본인이 직접 작성해야 하며, 작성 과정이 함께 기록됩니다.{' '}
           {usesSections ? '각 항목의 안내에 따라 빠짐없이 작성해주세요.' : `목표 분량은 ${wordLimit}자 내외입니다.`}
-          {isPastDue && !locked && <span className="text-red-600 font-medium"> · 마감일이 지났습니다.</span>}
+          {assignment.timeLimitMinutes > 0 && (
+            <span className="font-medium">
+              {' '}· 제한시간 {assignment.timeLimitMinutes}분{assignment.waitingRoomEnabled ? '(평가 시작부터)' : '(처음 들어온 때부터)'}, 시간이 끝나면 쓴 내용까지 자동 제출됩니다.
+            </span>
+          )}
+          {isPastDue && !locked &&<span className="text-red-600 font-medium"> · 마감일이 지났습니다.</span>}
         </p>
       </div>
 
