@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import {
   subscribeAssignment, getPassage, getOrCreateSubmission,
-  saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections
+  saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections, subscribeSubmission
 } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { setManualStudentIdentity } from '../../services/users.js'
@@ -223,6 +223,17 @@ export default function EssayWritePage() {
     }
   }
 
+  // 내 제출물 실시간 구독 — 교사의 강제 제출·재열기·점수 공개가 새로고침 없이 반영된다.
+  // 작성 중인 답안(text/sections 상태)은 건드리지 않고 submission 객체만 갱신한다 — 안 그러면
+  // 자동저장 echo가 돌아올 때마다 입력 중인 내용이 덮여 커서가 튄다.
+  const submissionId = submission?.id
+  useEffect(() => {
+    if (!submissionId) return
+    return subscribeSubmission(submissionId, snap => {
+      if (snap) setSubmission(prev => ({ ...prev, ...snap }))
+    })
+  }, [submissionId])
+
   // 제한시간: 교사가 다시 열어준 학생(timeLimitWaived)은 제외 — services/essay.js의 reopenSubmission 참고.
   const deadlineMs = submission && !submission.timeLimitWaived
     ? getExamDeadlineMs(assignment, submission, loadedAtRef.current)
@@ -425,7 +436,7 @@ export default function EssayWritePage() {
           )}
           {submission?.status === 'submitted' && (
             <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">
-              {submission.autoSubmitted ? '⏱ 시간 종료로 자동 제출됨' : '✅ 제출 완료'}
+              {submission.forceSubmitted ? '선생님이 제출 처리함' : submission.autoSubmitted ? '⏱ 시간 종료로 자동 제출됨' : '✅ 제출 완료'}
             </span>
           )}
           {assignment.status === 'closed' && submission?.status !== 'submitted' && (

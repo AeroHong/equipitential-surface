@@ -70,6 +70,16 @@ service cloud.firestore {
         (isAdmin() || (isTeacher() && resource.data.createdBy == request.auth.uid));
     }
 
+    // 교사 메모(학생별, 부정행위 기록 등) — 제출물 문서(essaySubmissions)는 학생 본인도 읽을 수
+    // 있어서 거기 두면 학생이 devtools로 볼 수 있다. 그래서 별도 컬렉션에 두고 그 배정의 교사
+    // (teacherUid)와 admin만 읽고 쓰게 한다. 문서 ID는 제출물 ID와 같다.
+    match /essayTeacherMemos/{id} {
+      allow read, update, delete: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
+      allow create: if request.auth != null && isEssayStaff() &&
+        request.resource.data.teacherUid == request.auth.uid;
+    }
+
     // 구조화된 응답 템플릿(탐구보고서 등) — 지문과 똑같은 소유권 패턴
     match /reportTemplates/{id} {
       allow read: if request.auth != null;

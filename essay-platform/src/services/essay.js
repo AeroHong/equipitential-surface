@@ -425,6 +425,8 @@ export async function reopenSubmission(subId) {
   await updateDoc(doc(db, 'essaySubmissions', subId), {
     status: 'draft',
     timeLimitWaived: true,
+    forceSubmitted: false,
+    autoSubmitted: false,
     updatedAt: serverTimestamp()
   })
 }
@@ -501,6 +503,74 @@ export function subscribeSubmissions(assignmentId, callback, teacherUid) {
   }, (err) => {
     console.error('제출물 구독 실패:', err)
     callback([])
+  })
+}
+
+/**
+ * 교사 강제 제출(부정행위 적발 등). 학생 화면은 subscribeSubmission으로 이 변화를 바로 받아
+ * 잠기고, 제출 내용은 학생이 마지막으로 자동저장한 내용 그대로다(자동저장 간격 0.7초). 잠긴
+ * 뒤 학생 쪽에서 오는 쓰기는 firestore.rules(status != 'submitted')가 막는다.
+ * @param {string} subId
+ */
+export async function forceSubmitSubmission(subId) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), {
+    status: 'submitted',
+    forceSubmitted: true,
+    forceSubmittedBy: auth.currentUser?.uid || '',
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 학생 본인 제출물 실시간 구독 — 학생 작성 화면이 교사의 강제 제출·재열기·점수 공개를
+ * 새로고침 없이 반영하는 데 쓴다.
+ * @param {string} subId
+ * @param {function(object|null): void} callback
+ * @returns {function} unsubscribe
+ */
+export function subscribeSubmission(subId, callback) {
+  return onSnapshot(doc(db, 'essaySubmissions', subId), (snap) => {
+    callback(snap.exists() ? { id: snap.id, ...snap.data() } : null)
+  }, (err) => console.error('제출물 구독 실패:', err))
+}
+
+// ─── 교사 메모(essayTeacherMemos) ─────────────────────────────────
+// 문서 ID = 제출물 ID. 학생은 읽을 수 없다(firestore.rules).
+
+/**
+ * 메모 저장(덮어쓰기)
+ * @param {object} submission 대상 제출물(id/assignmentId/studentUid/teacherUid 사용)
+ * @param {string} memo
+ */
+export async function saveTeacherMemo(submission, memo) {
+  await setDoc(doc(db, 'essayTeacherMemos', submission.id), {
+    assignmentId: submission.assignmentId,
+    studentUid: submission.studentUid,
+    teacherUid: auth.currentUser?.uid || '',
+    memo,
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 한 배정의 교사 메모 실시간 구독 — {제출물 ID: 메모 문자열}
+ * @param {string} assignmentId
+ * @param {string} teacherUid 규칙상 본인 teacherUid 조건이 쿼리에 있어야 한다
+ * @param {function(Record<string, string>): void} callback
+ * @returns {function} unsubscribe
+ */
+export function subscribeTeacherMemos(assignmentId, teacherUid, callback) {
+  const q = query(
+    collection(db, 'essayTeacherMemos'),
+    where('assignmentId', '==', assignmentId),
+    where('teacherUid', '==', teacherUid)
+  )
+  return onSnapshot(q, (snap) => {
+    callback(Object.fromEntries(snap.docs.map(d => [d.id, d.data().memo || ''])))
+  }, (err) => {
+    console.error('교사 메모 구독 실패:', err)
+    callback({})
   })
 }
 

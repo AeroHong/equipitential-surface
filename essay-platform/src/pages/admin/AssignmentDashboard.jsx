@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ref, onValue } from 'firebase/database'
 import { useAuth } from '../../App.jsx'
-import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, resetExamStart } from '../../services/essay.js'
+import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, resetExamStart, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
@@ -112,6 +112,55 @@ export default function AssignmentDashboard() {
     })
     return () => unsub()
   }, [assignmentId])
+
+  // 교사 메모 — 학생은 못 읽는 별도 컬렉션(essayTeacherMemos). {제출물 ID: 메모}
+  const [memos, setMemos] = useState({})
+  const [memoTarget, setMemoTarget] = useState(null) // 메모 창을 연 제출물
+  const [memoDraft, setMemoDraft] = useState('')
+  const [savingMemo, setSavingMemo] = useState(false)
+  useEffect(() => {
+    if (!assignmentId || !user) return
+    return subscribeTeacherMemos(assignmentId, user.uid, setMemos)
+  }, [assignmentId, user])
+
+  function openMemo(sub) {
+    setMemoTarget(sub)
+    setMemoDraft(memos[sub.id] || '')
+  }
+
+  async function handleSaveMemo() {
+    if (!memoTarget) return
+    setSavingMemo(true)
+    try {
+      await saveTeacherMemo(memoTarget, memoDraft.trim())
+      setMemoTarget(null)
+    } catch (err) {
+      console.error('메모 저장 실패:', err)
+      alert('메모 저장 중 오류가 발생했습니다.')
+    } finally {
+      setSavingMemo(false)
+    }
+  }
+
+  // 부정행위 적발 등으로 작성 중인 학생을 즉시 제출 처리한다. 사유를 적으면 시각과 함께 메모에
+  // 덧붙여 남긴다(나중에 학생·학부모 문의에 근거로 쓸 수 있게).
+  async function handleForceSubmit(sub) {
+    const reason = window.prompt(
+      `${sub.studentName || '이 학생'}의 답안을 지금 강제 제출할까요?\n학생 화면이 즉시 잠기고, 마지막으로 자동 저장된 내용이 제출됩니다.\n\n사유(선택, 메모에 기록됩니다):`,
+      ''
+    )
+    if (reason === null) return
+    try {
+      await forceSubmitSubmission(sub.id)
+      const stamp = new Date().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      const line = `[${stamp} 강제 제출]${reason.trim() ? ` ${reason.trim()}` : ''}`
+      const prev = memos[sub.id] || ''
+      await saveTeacherMemo(sub, prev ? `${prev}\n${line}` : line)
+    } catch (err) {
+      console.error('강제 제출 실패:', err)
+      alert('강제 제출 중 오류가 발생했습니다.')
+    }
+  }
 
   async function handleReopen(sub) {
     if (!window.confirm(`${sub.studentName} 학생의 제출을 다시 열까요? 학생이 재수정할 수 있게 됩니다.`)) return
@@ -780,7 +829,12 @@ export default function AssignmentDashboard() {
                       onClick={() => navigate(`/admin/assignments/${assignmentId}/student/${sub.studentUid}`)}
                     >
                       <td className="px-4 py-3">
-                        <p className="font-medium text-gray-800">{sub.studentName || '(이름 없음)'}</p>
+                        <p className="font-medium text-gray-800">
+                          {sub.studentName || '(이름 없음)'}
+                          {memos[sub.id] && (
+                            <span className="ml-1 cursor-help" title={memos[sub.id]}>📝</span>
+                          )}
+                        </p>
                         <p className="text-xs text-gray-400">{sub.studentClass ? `${sub.studentClass}반` : ''}</p>
                       </td>
                       {hasMultipleClassrooms && (
@@ -790,9 +844,13 @@ export default function AssignmentDashboard() {
                       )}
                       <td className="px-4 py-3">
                         <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${
-                          sub.status === 'submitted' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                          sub.status === 'submitted'
+                          ? (sub.forceSubmitted ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700')
+                          : 'bg-gray-100 text-gray-500'
                         }`}>
-                          {sub.status === 'submitted' ? (sub.autoSubmitted ? '시간종료 제출' : '제출완료') : '작성중'}
+                          {sub.status === 'submitted'
+                            ? (sub.forceSubmitted ? '강제 제출' : sub.autoSubmitted ? '시간종료 제출' : '제출완료')
+                            : '작성중'}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -826,14 +884,29 @@ export default function AssignmentDashboard() {
                       <td className="px-4 py-3"><AiFlagBadge aiFlags={aggregatedAiFlags(sub)} /></td>
                       <td className="px-4 py-3 text-gray-400 text-xs">{sub.submittedAt ? formatTime(sub.submittedAt) : '—'}</td>
                       <td className="px-4 py-3">
-                        {sub.status === 'submitted' && (
+                        <div className="flex items-center gap-2 whitespace-nowrap">
                           <button
-                            onClick={(e) => { e.stopPropagation(); handleReopen(sub) }}
+                            onClick={(e) => { e.stopPropagation(); openMemo(sub) }}
                             className="text-xs text-gray-400 hover:text-indigo-600"
                           >
-                            재열기
+                            메모
                           </button>
-                        )}
+                          {sub.status === 'submitted' ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleReopen(sub) }}
+                              className="text-xs text-gray-400 hover:text-indigo-600"
+                            >
+                              재열기
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleForceSubmit(sub) }}
+                              className="rounded border border-red-200 px-1.5 py-0.5 text-xs text-red-500 hover:bg-red-50"
+                            >
+                              강제 제출
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -843,6 +916,36 @@ export default function AssignmentDashboard() {
           </div>
         )}
       </main>
+
+      {memoTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
+          onMouseDown={e => { if (e.target === e.currentTarget) setMemoTarget(null) }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true">
+            <p className="text-sm font-bold text-gray-900">{memoTarget.studentName || '(이름 없음)'} — 교사 메모</p>
+            <p className="mt-0.5 text-xs text-gray-400">학생에게는 보이지 않습니다.</p>
+            <textarea
+              className="mt-3 w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              rows={6}
+              value={memoDraft}
+              onChange={e => setMemoDraft(e.target.value)}
+              placeholder="예: 10:25 휴대폰으로 답안 검색하는 것 목격"
+              autoFocus
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setMemoTarget(null)} className="px-3 py-2 text-sm text-gray-500">취소</button>
+              <button
+                onClick={handleSaveMemo}
+                disabled={savingMemo}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {savingMemo ? '저장 중...' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
