@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import { listPassages, getAssignment, createAssignment, updateAssignment } from '../../services/essay.js'
 import { listTemplates, getTemplateKind, TEMPLATE_KIND_QUESTION_SET } from '../../services/reportTemplates.js'
@@ -12,6 +12,12 @@ export default function AssignmentEditor() {
   const { user } = useAuth()
   const { assignmentId } = useParams()
   const isEdit = Boolean(assignmentId)
+  // 배정 복제: /admin/assignments/new?from=<원본 id> — 원본 설정으로 채운 "새 배정" 화면을 연다.
+  // 저장해야만 새 배정이 생기고, Classroom 게시(예약 포함)도 여기서 새로 고른다. 게시 연결·
+  // 평가 시작 여부·제출물은 복사하지 않는다(새 반/새 회차용이라).
+  const [searchParams] = useSearchParams()
+  const copyFromId = isEdit ? null : searchParams.get('from')
+  const isCopy = Boolean(copyFromId)
   const [responseType, setResponseType] = useState('essay')
   const [calculatorEnabled, setCalculatorEnabled] = useState(false)
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false)
@@ -25,7 +31,7 @@ export default function AssignmentEditor() {
   const [timeLimitMinutes, setTimeLimitMinutes] = useState('')
   const [status, setStatus] = useState('open')
   const [saving, setSaving] = useState(false)
-  const [loading, setLoading] = useState(isEdit)
+  const [loading, setLoading] = useState(isEdit || isCopy)
   const [accessDenied, setAccessDenied] = useState(false)
 
   // Classroom 연동 상태 — 배정 저장 "후"가 아니라 만드는 화면에서 바로 설정한다. 이렇게 해야
@@ -47,7 +53,7 @@ export default function AssignmentEditor() {
         const [passageList, templateList, assignment] = await Promise.all([
           listPassages(user.uid),
           listTemplates(user.uid),
-          isEdit ? getAssignment(assignmentId) : Promise.resolve(null)
+          isEdit || isCopy ? getAssignment(isEdit ? assignmentId : copyFromId) : Promise.resolve(null)
         ])
         // 본인이 만든 배정만 수정할 수 있다 — URL을 직접 알아도 남의 배정은 열리지 않게
         // 화면에서도 막는다(저장 시도 시 firestore.rules가 어차피 막지만, 편집 가능한 것처럼
@@ -56,8 +62,11 @@ export default function AssignmentEditor() {
           setAccessDenied(true)
           return
         }
-        const availablePassages = isEdit ? passageList : passageList.filter(p => p.active)
-        const availableTemplates = isEdit ? templateList : templateList.filter(t => t.active)
+        // 복제할 때 원본이 보관(비활성)된 지문·양식을 쓰고 있어도 그대로 고를 수 있게 남겨둔다.
+        const keepPassageId = assignment?.passageId
+        const keepTemplateId = assignment?.templateId
+        const availablePassages = isEdit ? passageList : passageList.filter(p => p.active || p.id === keepPassageId)
+        const availableTemplates = isEdit ? templateList : templateList.filter(t => t.active || t.id === keepTemplateId)
         setPassages(availablePassages)
         setTemplates(availableTemplates)
         if (assignment) {
@@ -67,11 +76,11 @@ export default function AssignmentEditor() {
           setWaitingRoomEnabled(!!assignment.waitingRoomEnabled)
           setPassageId(assignment.passageId || '')
           setTemplateId(assignment.templateId || '')
-          setTitle(assignment.title || '')
+          setTitle(isCopy ? `${assignment.title || '(제목 없음)'} (복사본)` : (assignment.title || ''))
           setDueAtStr(dueDate ? [dueDate.getFullYear(), String(dueDate.getMonth() + 1).padStart(2, '0'), String(dueDate.getDate()).padStart(2, '0')].join('-') : '')
           setWordLimit(assignment.wordLimit ?? '')
           setTimeLimitMinutes(assignment.timeLimitMinutes ?? '')
-          setStatus(assignment.status || 'open')
+          if (!isCopy) setStatus(assignment.status || 'open')
         } else if (!isEdit) {
           if (availablePassages.length) setPassageId(availablePassages[0].id)
           if (availableTemplates.length) setTemplateId(availableTemplates[0].id)
@@ -81,7 +90,7 @@ export default function AssignmentEditor() {
       }
     }
     load()
-  }, [assignmentId, isEdit, user])
+  }, [assignmentId, isEdit, copyFromId, user])
 
   async function handleConnectClassroom() {
     setClassroomError('')
@@ -236,7 +245,7 @@ export default function AssignmentEditor() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
         <div className="text-center">
-          <p className="text-gray-500 mb-4">다른 교사가 만든 배정이라 수정할 수 없습니다.</p>
+          <p className="text-gray-500 mb-4">{isCopy ? '다른 교사가 만든 배정이라 복제할 수 없습니다.' : '다른 교사가 만든 배정이라 수정할 수 없습니다.'}</p>
           <button onClick={() => navigate('/admin')} className="text-indigo-600 text-sm underline">돌아가기</button>
         </div>
       </div>
@@ -251,7 +260,7 @@ export default function AssignmentEditor() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h1 className="text-base font-bold text-gray-900">{isEdit ? '배정 수정' : '새 배정 만들기'}</h1>
+        <h1 className="text-base font-bold text-gray-900">{isEdit ? '배정 수정' : isCopy ? '배정 복제' : '새 배정 만들기'}</h1>
       </header>
 
       <main className="flex-1 p-5 max-w-xl mx-auto w-full space-y-5">

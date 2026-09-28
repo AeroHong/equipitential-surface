@@ -114,6 +114,13 @@ export default function EssayAdminHome() {
                       {STATUS_LABEL[a.status] || a.status}
                     </span>
                     <button
+                      onClick={(e) => { e.stopPropagation(); navigate(`/admin/assignments/new?from=${a.id}`) }}
+                      title="이 배정을 복제해서 새 배정 만들기 (설정은 그대로, 제출물·Classroom 게시는 새로)"
+                      className="text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 hover:border-indigo-200 rounded-md px-1.5 py-0.5 transition-colors"
+                    >
+                      복제
+                    </button>
+                    <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(a) }}
                       title="배정 삭제"
                       className="w-5 h-5 flex items-center justify-center rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-sm leading-none"
