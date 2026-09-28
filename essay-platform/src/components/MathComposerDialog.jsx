@@ -34,8 +34,6 @@ const SYMBOL_BUTTONS = [
   ['Δ', '\\Delta '], ['∞', '\\infty '], ['∈', '\\in '], ['→', '\\to '], ['°', '\\degree ']
 ]
 
-const KEYBOARD_PREF_KEY = 'mathVirtualKeyboardPref'
-
 export default function MathComposerDialog({ initialLatex, initialMode = 'inline', onCancel, onConfirm }) {
   const [mode, setMode] = useState(initialMode)
   const fieldRef = useRef(null)
@@ -69,47 +67,24 @@ export default function MathComposerDialog({ initialLatex, initialMode = 'inline
     return () => field.removeEventListener('beforeinput', handleBeforeInput)
   }, [])
 
-  // 가상 키보드는 policy="manual"로 두고 직접 켜고 끈다. "auto"에서는 터치 기기에서 포커스가
-  // 잡힐 때마다 MathLive가 키보드를 다시 띄우는데, 끄기 버튼을 눌러도 MathLive가 내부적으로
-  // 포커스를 다시 잡아서(그리고 ◀▶⌫·서식 버튼도 포커스를 잡아서) "항상 켜져 있는" 상태가 됐다.
-  // 수식 칸 자체는 inputmode=none이라 기기 키보드가 안 뜨므로, 외장 키보드가 없는 터치 기기(폰)는
-  // 창을 열 때 가상 키보드를 켜 준다 — 학생이 한 번 끄면 그 기기에선 다음부터 꺼진 채로 연다.
+  // 가상 키보드는 policy="manual" — 기본은 꺼져 있고, 학생이 수식 칸의 MathLive 키보드 버튼을
+  // 눌러야 켜진다. "auto"에서는 터치 기기에서 포커스가 잡힐 때마다 MathLive가 키보드를 다시
+  // 띄우는데, 끄기 버튼을 눌러도 MathLive가 내부적으로 포커스를 다시 잡아서(그리고 ◀▶⌫·서식
+  // 버튼도 포커스를 잡아서) "항상 켜져 있는" 상태가 됐다(실사용 신고).
+  // 키보드가 켜지면 그 높이만큼 창을 위로 밀어 올린다 — 안 그러면 키보드가 수식 칸을 가린다.
   const [keyboardHeight, setKeyboardHeight] = useState(0)
-  const [keyboardVisible, setKeyboardVisible] = useState(false)
   useEffect(() => {
     const kbd = window.mathVirtualKeyboard
     if (!kbd) return
-    const update = () => {
-      setKeyboardVisible(!!kbd.visible)
-      setKeyboardHeight(kbd.visible ? (kbd.boundingRect?.height || 0) : 0)
-    }
-    // 수식 칸 안의 MathLive 기본 키보드 버튼으로 켜고 꺼도 선호를 기억한다(우리 버튼과 동일하게).
-    const handleToggle = () => {
-      update()
-      try { localStorage.setItem(KEYBOARD_PREF_KEY, kbd.visible ? 'shown' : 'hidden') } catch { /* 저장소 없음 */ }
-    }
+    const update = () => setKeyboardHeight(kbd.visible ? (kbd.boundingRect?.height || 0) : 0)
     kbd.addEventListener('geometrychange', update)
-    kbd.addEventListener('virtual-keyboard-toggle', handleToggle)
-    const isTouch = window.matchMedia?.('(pointer: coarse)').matches
-    let preferHidden = false
-    try { preferHidden = localStorage.getItem(KEYBOARD_PREF_KEY) === 'hidden' } catch { /* 저장소 없음 */ }
-    const timer = isTouch && !preferHidden ? setTimeout(() => kbd.show({ animate: true }), 50) : null
+    kbd.addEventListener('virtual-keyboard-toggle', update)
     return () => {
-      if (timer) clearTimeout(timer)
       kbd.removeEventListener('geometrychange', update)
-      kbd.removeEventListener('virtual-keyboard-toggle', handleToggle)
+      kbd.removeEventListener('virtual-keyboard-toggle', update)
       kbd.hide()
     }
   }, [])
-
-  function toggleKeyboard() {
-    const kbd = window.mathVirtualKeyboard
-    if (!kbd) return
-    const next = !kbd.visible
-    if (next) kbd.show({ animate: true })
-    else kbd.hide({ animate: true })
-    try { localStorage.setItem(KEYBOARD_PREF_KEY, next ? 'shown' : 'hidden') } catch { /* 저장소 없음 */ }
-  }
 
   function runCommand(command) {
     fieldRef.current?.executeCommand(command)
@@ -185,14 +160,6 @@ export default function MathComposerDialog({ initialLatex, initialMode = 'inline
           </button>
         ))}
         <span className="ml-2 text-xs text-slate-400">커서 이동·지우기</span>
-        <button
-          type="button"
-          onMouseDown={e => e.preventDefault()}
-          onClick={toggleKeyboard}
-          className={`ml-auto h-10 rounded-lg border px-3 text-xs font-medium ${keyboardVisible ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600'}`}
-        >
-          ⌨ 수식 키보드 {keyboardVisible ? '끄기' : '켜기'}
-        </button>
       </div>
 
       <div className="mb-5 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-5">
