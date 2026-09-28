@@ -9,7 +9,7 @@ import AiFlagBadge from '../../components/AiFlagBadge.jsx'
 import PresenceBadge from '../../components/PresenceBadge.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
-import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
+import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, courseWorkExists, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
 
 /** handlePublishToClassroom과 반드시 같은 문구를 써야 한다 — "설명 동기화" 버튼이
  * 이미 게시된 과제를 이 문구로 덮어쓰기 때문. */
@@ -53,6 +53,7 @@ export default function AssignmentDashboard() {
   // 배정에 아직 안 걸린 수업들 중 "추가로 게시"할 대상 — 여러 개 동시 선택 가능.
   const [selectedCourseIds, setSelectedCourseIds] = useState([])
   const [publishing, setPublishing] = useState(false)
+  const [checkingClassrooms, setCheckingClassrooms] = useState(false)
   // 나중에 게시할 때도 예약 게시(state: DRAFT + scheduledTime)를 걸 수 있다 — 배정 만들기
   // 화면(AssignmentEditor.jsx)과 같은 방식.
   const [publishMode, setPublishMode] = useState('now') // 'now' | 'scheduled'
@@ -169,12 +170,66 @@ export default function AssignmentDashboard() {
     }
   }
 
+  // Classroom에서 직접 삭제된 과제를 이 배정의 연결 목록에서 걷어낸다. 연결할 때마다 자동으로
+  // 한 번 돌고, "Classroom과 대조" 버튼으로도 부를 수 있다. 확인 실패(권한/네트워크)는 삭제로
+  // 치지 않는다(courseWorkExists 참고).
+  async function pruneDeletedClassrooms(current) {
+    const linked = getAssignmentClassrooms(current)
+    const checks = await Promise.all(linked.map(async c => {
+      if (!c.courseWorkId) return true
+      try {
+        return await courseWorkExists(c.courseId, c.courseWorkId)
+      } catch (err) {
+        console.warn(`Classroom 과제 확인 실패(${c.courseName || c.courseId}):`, err)
+        return true
+      }
+    }))
+    const kept = linked.filter((_, i) => checks[i])
+    const removed = linked.filter((_, i) => !checks[i])
+    if (removed.length > 0) {
+      await updateAssignment(assignmentId, { classrooms: kept, classroom: null })
+      setAssignment(a => ({ ...a, classrooms: kept, classroom: null }))
+    }
+    return removed
+  }
+
+  async function handleCheckClassrooms() {
+    setClassroomError('')
+    setCheckingClassrooms(true)
+    try {
+      if (!isClassroomConnected()) await signInToClassroom()
+      const removed = await pruneDeletedClassrooms(assignment)
+      window.alert(removed.length > 0
+        ? `Classroom에서 삭제된 과제 ${removed.length}개를 목록에서 뺐습니다: ${removed.map(c => c.courseName || c.courseId).join(', ')}`
+        : '모든 연결된 과제가 Classroom에 그대로 있습니다.')
+    } catch (err) {
+      console.error('Classroom 대조 실패:', err)
+      setClassroomError(getClassroomErrorMessage(err, '확인'))
+    } finally {
+      setCheckingClassrooms(false)
+    }
+  }
+
+  // Classroom 쪽은 건드리지 않고 이 배정의 연결 목록에서만 뺀다 — Classroom 권한이 없거나
+  // 수업이 보관돼 확인이 안 되는 경우에도 교사가 직접 정리할 수 있게.
+  async function handleUnlinkClassroom(courseId) {
+    const target = getAssignmentClassrooms(assignment).find(c => c.courseId === courseId)
+    if (!window.confirm(`"${target?.courseName || courseId}" 연결을 목록에서 뺄까요? Classroom의 과제 자체는 삭제되지 않습니다.`)) return
+    const kept = getAssignmentClassrooms(assignment).filter(c => c.courseId !== courseId)
+    await updateAssignment(assignmentId, { classrooms: kept, classroom: null })
+    setAssignment(a => ({ ...a, classrooms: kept, classroom: null }))
+  }
+
   async function handleConnectClassroom() {
     setClassroomError('')
     setConnecting(true)
     try {
       await signInToClassroom()
-      const linkedIds = new Set(getAssignmentClassrooms(assignment).map(c => c.courseId))
+      const removed = await pruneDeletedClassrooms(assignment)
+      if (removed.length > 0) {
+        setClassroomError(`Classroom에서 삭제된 과제 ${removed.length}개를 목록에서 뺐습니다: ${removed.map(c => c.courseName || c.courseId).join(', ')}`)
+      }
+      const linkedIds = new Set(getAssignmentClassrooms(assignment).map(c => c.courseId).filter(id => !removed.some(r => r.courseId === id)))
       const list = await listMyCourses()
       setCourses(list)
       // 이미 이 배정에 걸린 수업은 기본 선택에서 빼준다 — 무심코 다시 체크하고 게시하면
@@ -487,9 +542,21 @@ export default function AssignmentDashboard() {
             <div className="rounded-2xl border border-gray-200 bg-white p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-sm font-bold text-gray-800">🎓 Google Classroom</p>
-                {totalClassroomStudents != null && (
-                  <span className="text-xs text-gray-500">전체 학생 {totalClassroomStudents}명</span>
-                )}
+                <div className="flex items-center gap-2">
+                  {totalClassroomStudents != null && (
+                    <span className="text-xs text-gray-500">전체 학생 {totalClassroomStudents}명</span>
+                  )}
+                  {classrooms.length > 0 && hasClassroomConfig() && (
+                    <button
+                      onClick={handleCheckClassrooms}
+                      disabled={checkingClassrooms}
+                      title="Classroom에서 삭제된 과제를 찾아 목록에서 뺍니다"
+                      className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                    >
+                      {checkingClassrooms ? '확인 중...' : '↻ Classroom과 대조'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* 이 배정에 걸린 수업들 — 하나였던 예전과 달리 여러 반에 동시 게시될 수 있어서
@@ -503,9 +570,18 @@ export default function AssignmentDashboard() {
                       <div key={c.courseId} className="rounded-xl border border-gray-100 bg-gray-50 p-2.5">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-bold text-emerald-700">{c.courseName || c.courseId}</p>
-                          {c.alternateLink && (
-                            <a href={c.alternateLink} target="_blank" rel="noreferrer" className="text-xs font-medium text-emerald-700 hover:underline">과제 열기</a>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {c.alternateLink && (
+                              <a href={c.alternateLink} target="_blank" rel="noreferrer" className="text-xs font-medium text-emerald-700 hover:underline">과제 열기</a>
+                            )}
+                            <button
+                              onClick={() => handleUnlinkClassroom(c.courseId)}
+                              title="이 배정의 Classroom 연결 목록에서만 뺍니다(Classroom 과제는 그대로)"
+                              className="text-xs text-gray-300 hover:text-red-500"
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
                         {c.scheduledAt && (
                           <p className="mt-0.5 text-[11px] text-amber-600">

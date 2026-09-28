@@ -237,3 +237,23 @@ export async function updateCourseWorkDescription(courseId, courseWorkId, descri
     resource: { description }
   })
 }
+
+/**
+ * courseWork가 Classroom에 아직 남아있는지 확인한다. 교사가 Classroom에서 과제를 직접
+ * 삭제해도 우리 쪽(assignment.classrooms)에는 알림이 오지 않아서, 대시보드가 이걸로
+ * 대조해 삭제된 연결을 걷어낸다. 404(과제나 수업이 없음)만 "삭제됨"으로 보고, 권한·네트워크
+ * 오류는 그대로 던진다 — 일시적인 오류로 멀쩡한 연결을 지우면 안 되기 때문.
+ * @param {string} courseId
+ * @param {string} courseWorkId
+ * @returns {Promise<boolean>}
+ */
+export async function courseWorkExists(courseId, courseWorkId) {
+  try {
+    await window.gapi.client.classroom.courses.courseWork.get({ courseId, id: courseWorkId })
+    return true
+  } catch (err) {
+    const code = err?.status || err?.result?.error?.code
+    if (code === 404) return false
+    throw err
+  }
+}
