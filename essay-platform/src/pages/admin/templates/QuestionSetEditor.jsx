@@ -5,7 +5,7 @@ import { useAuth } from '../../../App.jsx'
 import {
   getTemplate, createTemplate, updateTemplate, getTemplateKind, TEMPLATE_KIND_QUESTION_SET
 } from '../../../services/reportTemplates.js'
-import { sanitizePassageHtml, isEmptyHtml } from '../../../utils/sanitizeHtml.js'
+import { sanitizePassageHtml, isEmptyHtml, htmlToText } from '../../../utils/sanitizeHtml.js'
 import { theme } from '../../../theme.js'
 import RichTextEditor from '../../../components/richtext/RichTextEditor.jsx'
 import ToastProvider from '../../../components/richtext/ToastProvider.jsx'
@@ -18,7 +18,20 @@ function emptyQuestion() {
   return { id: makeSectionId(), heading: '', promptHtml: '', required: true, wordLimitGuide: null, maxScore: null }
 }
 
-const emptyForm = { title: '', description: '', sections: [emptyQuestion()] }
+const emptyForm = { title: '', descriptionHtml: '', sections: [emptyQuestion()] }
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// 공통 안내가 평문(description)만 있던 초기 문항 세트를 열면 서식 편집기에 옮겨 담는다.
+function plainToHtml(text) {
+  return (text || '')
+    .split(/\n{2,}/)
+    .filter(Boolean)
+    .map(block => `<p>${escapeHtml(block).replace(/\n/g, '<br/>')}</p>`)
+    .join('')
+}
 
 /**
  * 서술형 문항 세트 편집기. 보고서 양식(TemplateEditor)은 안내 문구가 한 줄짜리 평문이라
@@ -52,6 +65,7 @@ export default function QuestionSetEditor() {
         setForm({
           ...emptyForm,
           ...t,
+          descriptionHtml: t.descriptionHtml || plainToHtml(t.description),
           sections: t.sections?.length
             ? t.sections.map(s => ({ ...emptyQuestion(), ...s }))
             : [emptyQuestion()]
@@ -111,11 +125,17 @@ export default function QuestionSetEditor() {
       }))
     if (sections.length === 0) { alert('문항을 하나 이상 입력해주세요.'); return }
 
+    const safeDescription = sanitizePassageHtml(form.descriptionHtml || '')
+    const descriptionHtml = isEmptyHtml(safeDescription) ? '' : safeDescription
+
     setSaving(true)
     try {
       const payload = {
         title: form.title.trim(),
-        description: form.description,
+        // 공통 안내도 그림을 넣을 수 있게 서식 HTML(descriptionHtml)로 저장한다. description에는
+        // 평문을 같이 남겨 두지만, 학생 화면은 descriptionHtml이 있으면 그쪽만 보여준다.
+        descriptionHtml,
+        description: htmlToText(descriptionHtml),
         sections,
         kind: TEMPLATE_KIND_QUESTION_SET
       }
@@ -174,13 +194,17 @@ export default function QuestionSetEditor() {
           <input className={inputClass} value={form.title} onChange={e => set('title', e.target.value)} placeholder="예: 2학기 물리학Ⅱ 서술형 평가" />
         </div>
 
-        <div>
-          <label className={labelClass}>공통 안내 (선택, 학생 화면 상단에 표시)</label>
-          <textarea className={`${inputClass} resize-none`} rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="예: 풀이 과정을 반드시 쓰시오. 단위를 빠뜨리면 감점됩니다." />
-        </div>
-
         <ThemeProvider theme={theme}>
           <ToastProvider>
+            <div>
+              <label className={labelClass}>공통 안내 (선택, 학생 화면 상단에 표시 — 그림도 붙여넣을 수 있습니다)</label>
+              <RichTextEditor
+                value={form.descriptionHtml}
+                onChange={html => set('descriptionHtml', html)}
+                placeholder="예: 풀이 과정을 반드시 쓰시오. 단위를 빠뜨리면 감점됩니다. (모든 문항에 공통으로 쓰는 그림·표도 여기에)"
+              />
+            </div>
+
             <div className="space-y-4">
               {form.sections.map((q, idx) => (
                 <div key={q.id} className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">

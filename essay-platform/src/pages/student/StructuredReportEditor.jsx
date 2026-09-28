@@ -29,7 +29,12 @@ export default function StructuredReportEditor({ template, sections, onChange, d
     // EssayEditor.jsx와 같은 이유로, flexbox가 이 영역을 찌그러뜨리지 않고 실제 콘텐츠
     // 높이 그대로 렌더링한 뒤 넘치는 부분은 부모 칸 스크롤로 해결하게 한다.
     <div className="flex-shrink-0">
-      {template.description && (
+      {template.descriptionHtml ? (
+        <div
+          className="passage-rich mb-4 rounded-xl border border-gray-200 bg-white p-4 text-sm leading-relaxed text-gray-700"
+          dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(template.descriptionHtml) }}
+        />
+      ) : template.description && (
         <p
           className="text-sm text-gray-500 mb-4 whitespace-pre-wrap"
           dangerouslySetInnerHTML={{ __html: linkifyText(template.description) }}
