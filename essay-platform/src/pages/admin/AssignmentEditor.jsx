@@ -4,13 +4,9 @@ import { useAuth } from '../../App.jsx'
 import { listPassages, getAssignment, createAssignment, updateAssignment } from '../../services/essay.js'
 import { listTemplates, getTemplateKind, TEMPLATE_KIND_QUESTION_SET } from '../../services/reportTemplates.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
+import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
 
 /** <input type="datetime-local">의 min 속성용 — 지금 이 순간을 로컬 시간대 "YYYY-MM-DDTHH:mm"로. */
-function nowForDatetimeLocal() {
-  const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
-  return d.toISOString().slice(0, 16)
-}
-
 export default function AssignmentEditor() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -375,9 +371,8 @@ export default function AssignmentEditor() {
           </div>
         )}
 
-        {/* Classroom 연동은 새로 만들 때만 이 화면에서 설정한다 — 저장 후 따로 연결하면
-            이미 PUBLISHED 상태로만 게시할 수 있어 예약 게시가 애초에 불가능하다. 기존
-            배정에 나중에 연결하는 것은 지금처럼 대시보드(AssignmentDashboard.jsx)에서 한다. */}
+        {/* Classroom 연동은 새로 만들 때만 이 화면에서 설정한다. 기존 배정에 나중에 연결하는
+            것은 대시보드(AssignmentDashboard.jsx)에서 하며, 거기서도 예약 게시를 걸 수 있다. */}
         {!isEdit && (
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
             <label className="flex items-center gap-2 cursor-pointer">

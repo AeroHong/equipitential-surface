@@ -8,6 +8,7 @@ import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
 import PresenceBadge from '../../components/PresenceBadge.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
+import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
 
 /** handlePublishToClassroom과 반드시 같은 문구를 써야 한다 — "설명 동기화" 버튼이
@@ -52,6 +53,10 @@ export default function AssignmentDashboard() {
   // 배정에 아직 안 걸린 수업들 중 "추가로 게시"할 대상 — 여러 개 동시 선택 가능.
   const [selectedCourseIds, setSelectedCourseIds] = useState([])
   const [publishing, setPublishing] = useState(false)
+  // 나중에 게시할 때도 예약 게시(state: DRAFT + scheduledTime)를 걸 수 있다 — 배정 만들기
+  // 화면(AssignmentEditor.jsx)과 같은 방식.
+  const [publishMode, setPublishMode] = useState('now') // 'now' | 'scheduled'
+  const [scheduledAtStr, setScheduledAtStr] = useState('')
   const [classroomError, setClassroomError] = useState('')
   // 클래스룸별 학생 수 — {courseId: {count, updatedAt}}. 배정 하나에 여러 수업이 걸릴 수
   // 있어서(assignment.classrooms) 단일 값이 아니라 courseId로 찾는 맵으로 관리한다.
@@ -214,6 +219,14 @@ export default function AssignmentDashboard() {
 
   async function handlePublishToClassroom() {
     if (!assignment || selectedCourseIds.length === 0) return
+    let scheduledAt = null
+    if (publishMode === 'scheduled') {
+      scheduledAt = new Date(scheduledAtStr)
+      if (!scheduledAtStr || Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+        alert('예약 시각은 지금보다 이후여야 합니다.')
+        return
+      }
+    }
     setPublishing(true)
     setClassroomError('')
     try {
@@ -228,13 +241,15 @@ export default function AssignmentDashboard() {
             title: assignment.title,
             description: buildCourseWorkDescription(assignmentId),
             linkUrl,
-            dueDate
+            dueDate,
+            scheduledAt: scheduledAt || undefined
           })
           added.push({
             courseId,
             courseWorkId: result.id,
             courseName: course?.name || '',
             alternateLink: result.alternateLink || '',
+            scheduledAt: scheduledAt || null,
             postedAt: new Date()
           })
         } catch (err) {
@@ -252,6 +267,8 @@ export default function AssignmentDashboard() {
       }
       setCourses(null)
       setSelectedCourseIds([])
+      setPublishMode('now')
+      setScheduledAtStr('')
       if (failed.length > 0) setClassroomError(`다음 수업에는 게시하지 못했습니다: ${failed.join(', ')}`)
     } catch (err) {
       console.error('Classroom 게시 실패:', err)
@@ -565,8 +582,40 @@ export default function AssignmentDashboard() {
                       </label>
                     ))}
                   </div>
-                  <button onClick={handlePublishToClassroom} disabled={publishing || selectedCourseIds.length === 0} className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-40">
-                    {publishing ? '게시 중...' : `선택한 ${selectedCourseIds.length}개 수업에 과제로 게시`}
+                  <div className="flex gap-2">
+                    {[['now', '지금 게시'], ['scheduled', '예약 게시']].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setPublishMode(value)}
+                        className={`flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                          publishMode === value ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {publishMode === 'scheduled' && (
+                    <div>
+                      <input
+                        type="datetime-local"
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        value={scheduledAtStr}
+                        min={nowForDatetimeLocal()}
+                        onChange={e => setScheduledAtStr(e.target.value)}
+                      />
+                      <p className="mt-1 text-xs text-gray-400">지정한 시각까지 Classroom에 초안으로만 남아있다가, 그 시각에 자동으로 학생들에게 공개됩니다.</p>
+                    </div>
+                  )}
+                  <button
+                    onClick={handlePublishToClassroom}
+                    disabled={publishing || selectedCourseIds.length === 0 || (publishMode === 'scheduled' && !scheduledAtStr)}
+                    className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-40"
+                  >
+                    {publishing
+                      ? '게시 중...'
+                      : `선택한 ${selectedCourseIds.length}개 수업에 ${publishMode === 'scheduled' ? '예약 게시' : '과제로 게시'}`}
                   </button>
                 </div>
               )}
