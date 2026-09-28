@@ -175,12 +175,14 @@ export default function AssignmentDashboard() {
   // 치지 않는다(courseWorkExists 참고).
   async function pruneDeletedClassrooms(current) {
     const linked = getAssignmentClassrooms(current)
+    const failed = []
     const checks = await Promise.all(linked.map(async c => {
       if (!c.courseWorkId) return true
       try {
         return await courseWorkExists(c.courseId, c.courseWorkId)
       } catch (err) {
         console.warn(`Classroom 과제 확인 실패(${c.courseName || c.courseId}):`, err)
+        failed.push({ name: c.courseName || c.courseId, message: getClassroomErrorMessage(err, '확인') })
         return true
       }
     }))
@@ -190,7 +192,7 @@ export default function AssignmentDashboard() {
       await updateAssignment(assignmentId, { classrooms: kept, classroom: null })
       setAssignment(a => ({ ...a, classrooms: kept, classroom: null }))
     }
-    return removed
+    return { removed, failed }
   }
 
   async function handleCheckClassrooms() {
@@ -198,10 +200,12 @@ export default function AssignmentDashboard() {
     setCheckingClassrooms(true)
     try {
       if (!isClassroomConnected()) await signInToClassroom()
-      const removed = await pruneDeletedClassrooms(assignment)
-      window.alert(removed.length > 0
-        ? `Classroom에서 삭제된 과제 ${removed.length}개를 목록에서 뺐습니다: ${removed.map(c => c.courseName || c.courseId).join(', ')}`
-        : '모든 연결된 과제가 Classroom에 그대로 있습니다.')
+      const { removed, failed } = await pruneDeletedClassrooms(assignment)
+      const lines = []
+      if (removed.length > 0) lines.push(`Classroom에서 삭제된 과제 ${removed.length}개를 목록에서 뺐습니다: ${removed.map(c => c.courseName || c.courseId).join(', ')}`)
+      if (failed.length > 0) lines.push(`다음 수업은 확인하지 못해 그대로 두었습니다(필요하면 카드의 ✕로 직접 빼주세요):\n${failed.map(f => `- ${f.name}: ${f.message}`).join('\n')}`)
+      if (lines.length === 0) lines.push('모든 연결된 과제가 Classroom에 그대로 있습니다.')
+      window.alert(lines.join('\n\n'))
     } catch (err) {
       console.error('Classroom 대조 실패:', err)
       setClassroomError(getClassroomErrorMessage(err, '확인'))
@@ -225,7 +229,7 @@ export default function AssignmentDashboard() {
     setConnecting(true)
     try {
       await signInToClassroom()
-      const removed = await pruneDeletedClassrooms(assignment)
+      const { removed } = await pruneDeletedClassrooms(assignment)
       if (removed.length > 0) {
         setClassroomError(`Classroom에서 삭제된 과제 ${removed.length}개를 목록에서 뺐습니다: ${removed.map(c => c.courseName || c.courseId).join(', ')}`)
       }
