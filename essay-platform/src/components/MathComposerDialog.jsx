@@ -31,7 +31,9 @@ const SYMBOL_BUTTONS = [
   ['+', '+'], ['−', '-'], ['×', '\\times '], ['÷', '\\div '], ['±', '\\pm '],
   ['=', '='], ['≠', '\\ne '], ['≤', '\\le '], ['≥', '\\ge '], ['≈', '\\approx '],
   ['α', '\\alpha '], ['β', '\\beta '], ['γ', '\\gamma '], ['θ', '\\theta '], ['π', '\\pi '],
-  ['Δ', '\\Delta '], ['∞', '\\infty '], ['∈', '\\in '], ['→', '\\to '], ['°', '\\degree ']
+  ['Δ', '\\Delta '], ['∞', '\\infty '], ['∈', '\\in '], ['→', '\\to '], ['°', '\\degree '],
+  // 기하 — "각도 기호가 없다"는 수학 선생님 제보로 추가
+  ['∠', '\\angle '], ['△', '\\triangle '], ['⊥', '\\perp '], ['∥', '\\parallel '], ['∽', '\\backsim ']
 ]
 
 export default function MathComposerDialog({ initialLatex, initialMode = 'inline', onCancel, onConfirm }) {

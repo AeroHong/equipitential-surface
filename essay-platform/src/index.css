@@ -17,6 +17,17 @@ body {
   --keyboard-zindex: 1500;
 }
 
+/* MathLive 메뉴(수식 칸의 ☰ 버튼 → Insert 등)는 화면 높이에 맞춰 높이를 줄이지만 자체 CSS가
+   overflow: visible이라 넘친 항목이 잘린 채 스크롤이 안 됐다(태블릿/폰에서 신고). 스크롤되게 한다.
+   메뉴가 수식 칸 shadow DOM 안에 붙는 경우를 위해 ::part로도 지정한다. */
+.ui-menu-container,
+math-field::part(ui-menu-container) {
+  overflow-y: auto !important;
+  max-height: calc(100dvh - 16px);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* DOCX에서 가져온 지문 본문(sanitizeHtml.js가 허용한 태그만 통과)의 문단/서식 스타일 */
 .passage-rich p {
   margin-bottom: 0.9em;
