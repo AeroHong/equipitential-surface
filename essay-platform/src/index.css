@@ -11,6 +11,12 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* MathLive 가상 키보드(아이폰 등 수식 입력)의 기본 z-index는 105라, z-[1400]인 수식 입력 창
+   (MathComposerDialog.jsx) 뒤에 깔려 키보드 버튼을 눌러도 안 보였다. 창보다 위로 올린다. */
+body {
+  --keyboard-zindex: 1500;
+}
+
 /* DOCX에서 가져온 지문 본문(sanitizeHtml.js가 허용한 태그만 통과)의 문단/서식 스타일 */
 .passage-rich p {
   margin-bottom: 0.9em;

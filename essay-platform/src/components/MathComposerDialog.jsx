@@ -47,6 +47,45 @@ export default function MathComposerDialog({ initialLatex, initialMode = 'inline
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 안드로이드는 외장 키보드를 연결해도 입력이 키보드 앱(IME)을 거쳐 들어와서, Backspace가
+  // keydown이 아니라 beforeinput(deleteContentBackward)으로만 온다 — MathLive가 이걸 처리하지
+  // 않아 백스페이스가 먹지 않았다(실사용 신고: Del은 되는데 Backspace만 안 됨). 데스크톱/iOS는
+  // MathLive가 keydown 단계에서 preventDefault하므로 beforeinput이 아예 안 와서 두 번 지워지지 않는다.
+  useEffect(() => {
+    const field = fieldRef.current
+    if (!field) return
+    const handleBeforeInput = e => {
+      if (e.inputType === 'deleteContentBackward') {
+        e.preventDefault()
+        field.executeCommand('deleteBackward')
+      } else if (e.inputType === 'deleteContentForward') {
+        e.preventDefault()
+        field.executeCommand('deleteForward')
+      }
+    }
+    field.addEventListener('beforeinput', handleBeforeInput)
+    return () => field.removeEventListener('beforeinput', handleBeforeInput)
+  }, [])
+
+  // 가상 키보드(아이폰 등)가 올라오면 그 높이만큼 창을 위로 밀어 올린다 — 안 그러면 키보드가
+  // 수식 입력칸을 가린다.
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
+  useEffect(() => {
+    const kbd = window.mathVirtualKeyboard
+    if (!kbd) return
+    const update = () => setKeyboardHeight(kbd.visible ? (kbd.boundingRect?.height || 0) : 0)
+    kbd.addEventListener('geometrychange', update)
+    return () => {
+      kbd.removeEventListener('geometrychange', update)
+      kbd.hide?.()
+    }
+  }, [])
+
+  function runCommand(command) {
+    fieldRef.current?.executeCommand(command)
+    fieldRef.current?.focus()
+  }
+
   useEffect(() => {
     const close = e => { if (e.key === 'Escape') onCancel() }
     window.addEventListener('keydown', close)
@@ -64,7 +103,12 @@ export default function MathComposerDialog({ initialLatex, initialMode = 'inline
     onConfirm(latex, mode)
   }
 
-  return <div className="fixed inset-0 z-[1400] flex items-end justify-center bg-slate-900/35 p-3 sm:items-center" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onCancel() }}>
+  return <div
+    className="fixed inset-0 z-[1400] flex items-end justify-center bg-slate-900/35 p-3 sm:items-center"
+    style={keyboardHeight ? { paddingBottom: keyboardHeight + 12, alignItems: 'flex-end' } : undefined}
+    role="presentation"
+    onMouseDown={e => { if (e.target === e.currentTarget) onCancel() }}
+  >
     <form onSubmit={submit} className="w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-5" role="dialog" aria-modal="true" aria-labelledby="math-dialog-title">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
@@ -88,6 +132,29 @@ export default function MathComposerDialog({ initialLatex, initialMode = 'inline
         {SYMBOL_BUTTONS.map(([glyph, latex]) => (
           <button key={glyph} type="button" onClick={() => insert(latex)} className="h-10 min-w-10 flex-none rounded-lg border border-slate-200 bg-white px-1 text-base text-slate-700 hover:border-indigo-300 hover:bg-indigo-50">{glyph}</button>
         ))}
+      </div>
+
+      {/* 태블릿에서 터치로 수식 중간에 커서를 놓기가 어려워서, 커서 이동·지우기를 버튼으로도 할 수 있게 한다.
+          onMouseDown preventDefault: 버튼을 눌러도 수식 입력칸의 포커스(커서 위치)를 뺏지 않게. */}
+      <div className="mb-2 flex items-center gap-1">
+        {[
+          ['moveToPreviousChar', '◀', '커서 왼쪽으로'],
+          ['moveToNextChar', '▶', '커서 오른쪽으로'],
+          ['deleteBackward', '⌫', '앞 글자 지우기']
+        ].map(([command, glyph, label]) => (
+          <button
+            key={command}
+            type="button"
+            title={label}
+            aria-label={label}
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => runCommand(command)}
+            className="h-10 min-w-12 rounded-lg border border-slate-200 bg-white px-3 text-base text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 active:bg-indigo-100"
+          >
+            {glyph}
+          </button>
+        ))}
+        <span className="ml-2 text-xs text-slate-400">커서 이동·지우기</span>
       </div>
 
       <div className="mb-5 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-5">
