@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../../App.jsx'
-import { getTemplate, createTemplate, updateTemplate } from '../../../services/reportTemplates.js'
+import { getTemplate, createTemplate, updateTemplate, getTemplateKind, TEMPLATE_KIND_QUESTION_SET } from '../../../services/reportTemplates.js'
 
 function makeSectionId() {
   return `sec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
@@ -33,10 +33,16 @@ export default function TemplateEditor() {
         setLoading(false)
         return
       }
+      // 서술형 문항 세트는 문항 본문(promptHtml)이 있어 이 화면에서 저장하면 날아간다 —
+      // 전용 편집기로 보낸다.
+      if (t && getTemplateKind(t) === TEMPLATE_KIND_QUESTION_SET) {
+        navigate(`/admin/question-sets/${templateId}/edit`, { replace: true })
+        return
+      }
       if (t) setForm({ ...emptyForm, ...t, sections: t.sections?.length ? t.sections : [emptySection()] })
       setLoading(false)
     })
-  }, [isEdit, templateId, user])
+  }, [isEdit, templateId, user, navigate])
 
   function set(key, value) {
     setForm(prev => ({ ...prev, [key]: value }))

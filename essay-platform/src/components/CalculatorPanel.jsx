@@ -64,6 +64,19 @@ export default function CalculatorPanel() {
     let cancelled = false
     let injected = false
     let resizeObserver = null
+    let keyboardObserver = null
+
+    // GeoGebra는 키패드 버튼을 누를 때마다 내부 숨김 textarea에 포커스를 줘서, 태블릿에서는
+    // OS 가상 키보드가 매번 올라와 화면을 가려버린다. inputmode="none"은 포커스·입력(물리
+    // 키보드 포함)은 그대로 두고 가상 키보드만 억제한다. GeoGebra가 입력 요소를 부팅 후에
+    // 또는 키패드 재열기 때 새로 만들기 때문에, 한 번 붙이고 끝내지 않고 계속 감시한다.
+    function suppressVirtualKeyboard() {
+      const root = containerRef.current
+      if (!root) return
+      root.querySelectorAll('textarea, input, [contenteditable="true"]').forEach(el => {
+        if (el.getAttribute('inputmode') !== 'none') el.setAttribute('inputmode', 'none')
+      })
+    }
 
     function tryInject(width, height) {
       if (injected || cancelled || !containerRef.current) return
@@ -83,6 +96,14 @@ export default function CalculatorPanel() {
         borderColor: '#e5e7eb'
       }, true)
       applet.inject(containerId)
+      keyboardObserver = new MutationObserver(suppressVirtualKeyboard)
+      keyboardObserver.observe(containerRef.current, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['inputmode']
+      })
+      suppressVirtualKeyboard()
       // inject()가 반환된다고 화면에 바로 그려지는 게 아니다 — 내부 앱(GWT) 부팅에 몇 초가
       // 더 걸린다. appletOnLoad 콜백은 신뢰성 있게 발화하지 않아(실제로 확인함) 못 쓰고,
       // 대신 스피너를 일정 시간 더 붙잡아둔다 — 정확하진 않지만 "저장됐다고 나왔는데
@@ -118,6 +139,7 @@ export default function CalculatorPanel() {
     return () => {
       cancelled = true
       resizeObserver?.disconnect()
+      keyboardObserver?.disconnect()
       // GGBApplet에는 공식 destroy API가 없어, 컨테이너를 비우는 방식으로 정리한다.
       if (containerRef.current) containerRef.current.innerHTML = ''
     }

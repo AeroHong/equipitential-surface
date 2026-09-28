@@ -27,11 +27,26 @@ import { auth, db } from '../firebase.js'
  * @property {number|null} wordLimitGuide
  * @property {number|null} maxScore  배점(선택) — 'essay_calculator' 배정의 채점(services/essay.js
  *   의 saveGrading)에서 이 섹션의 만점으로 쓰인다. structured 배정에 쓰이는 템플릿이면 무시됨.
+ * @property {string} [promptHtml]  문항 본문(서식·이미지 포함 HTML) — kind가 'question_set'인
+ *   템플릿에서만 쓴다. 학생 화면에서 입력란 위에 그대로 보여준다.
  */
 
 /**
+ * 템플릿 종류. 같은 reportTemplates 컬렉션에 저장하고 섹션 구조도 같아서, 배정/채점/리플레이/
+ * 대시보드는 종류를 구분하지 않고 그대로 동작한다 — 작성 화면(관리 메뉴)만 다르다.
+ * - 'report'(필드 없음 포함): 보고서 양식 — 그룹 라벨 + 소제목 + 안내 문구
+ * - 'question_set': 서술형 문항 — 문항마다 서식·이미지가 들어간 본문(promptHtml)
+ */
+export const TEMPLATE_KIND_REPORT = 'report'
+export const TEMPLATE_KIND_QUESTION_SET = 'question_set'
+
+export function getTemplateKind(template) {
+  return template?.kind === TEMPLATE_KIND_QUESTION_SET ? TEMPLATE_KIND_QUESTION_SET : TEMPLATE_KIND_REPORT
+}
+
+/**
  * 템플릿 생성
- * @param {{title: string, description: string, sections: TemplateSection[]}} data
+ * @param {{title: string, description: string, sections: TemplateSection[], kind?: string}} data
  * @returns {Promise<string>} templateId
  */
 export async function createTemplate(data) {
@@ -39,6 +54,7 @@ export async function createTemplate(data) {
     title: data.title || '',
     description: data.description || '',
     sections: data.sections || [],
+    kind: data.kind || TEMPLATE_KIND_REPORT,
     active: true,
     createdBy: auth.currentUser?.uid || '',
     createdAt: serverTimestamp(),

@@ -16,6 +16,7 @@ import AssignmentDashboard from './pages/admin/AssignmentDashboard.jsx'
 import ReplayView from './pages/admin/ReplayView.jsx'
 import TemplateList from './pages/admin/templates/TemplateList.jsx'
 import TemplateEditor from './pages/admin/templates/TemplateEditor.jsx'
+import QuestionSetEditor from './pages/admin/templates/QuestionSetEditor.jsx'
 
 // ─── Auth Context (physlab의 App.jsx와 동일한 패턴 — 같은 Firebase 프로젝트를 쓰므로 users/{uid}.role도 그대로 통한다) ──
 export const AuthContext = createContext(null)
@@ -228,6 +229,9 @@ export default function App() {
           <Route path="/admin/templates" element={<RequireTeacherOnly><TemplateList /></RequireTeacherOnly>} />
           <Route path="/admin/templates/new" element={<RequireTeacherOnly><TemplateEditor /></RequireTeacherOnly>} />
           <Route path="/admin/templates/:templateId/edit" element={<RequireTeacherOnly><TemplateEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/question-sets" element={<RequireTeacherOnly><TemplateList key="question_set" kind="question_set" /></RequireTeacherOnly>} />
+          <Route path="/admin/question-sets/new" element={<RequireTeacherOnly><QuestionSetEditor /></RequireTeacherOnly>} />
+          <Route path="/admin/question-sets/:templateId/edit" element={<RequireTeacherOnly><QuestionSetEditor /></RequireTeacherOnly>} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import { listPassages, getAssignment, createAssignment, updateAssignment } from '../../services/essay.js'
-import { listTemplates } from '../../services/reportTemplates.js'
+import { listTemplates, getTemplateKind, TEMPLATE_KIND_QUESTION_SET } from '../../services/reportTemplates.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
 
 /** <input type="datetime-local">의 min 속성용 — 지금 이 순간을 로컬 시간대 "YYYY-MM-DDTHH:mm"로. */
@@ -110,9 +110,20 @@ export default function AssignmentEditor() {
   // "구조화된 보고서 + 계산기"에 더 가깝다. essay(자유서술 한 칸)만 지문이 필수다.
   const usesTemplate = responseType === 'structured' || responseType === 'essay_calculator'
 
+  // 새 배정에서 유형을 바꾸면 그 유형에 맞는 종류의 양식을 기본 선택해준다 — 서술형 평가-문항은
+  // 문항 세트, 구조화된 보고서는 보고서 양식(해당 종류가 하나도 없으면 선택은 그대로 둔다).
+  function handleResponseTypeChange(value) {
+    setResponseType(value)
+    const preferredKind = value === 'essay_calculator' ? TEMPLATE_KIND_QUESTION_SET : 'report'
+    const current = templates.find(t => t.id === templateId)
+    if (current && getTemplateKind(current) === preferredKind) return
+    const preferred = templates.find(t => getTemplateKind(t) === preferredKind)
+    if (preferred) setTemplateId(preferred.id)
+  }
+
   async function handleSave() {
     if (responseType === 'essay' && !passageId) { alert('지문을 선택해주세요.'); return }
-    if (usesTemplate && !templateId) { alert('보고서 양식을 선택해주세요.'); return }
+    if (usesTemplate && !templateId) { alert('양식 또는 문항 세트를 선택해주세요.'); return }
     if (!title.trim()) { alert('배정 제목을 입력해주세요.'); return }
     if (!isEdit && classroomEnabled) {
       if (selectedCourseIds.length === 0) { alert('게시할 Classroom 수업을 하나 이상 선택해주세요.'); return }
@@ -250,7 +261,7 @@ export default function AssignmentEditor() {
               <button
                 key={opt.value}
                 type="button"
-                onClick={() => !isEdit && setResponseType(opt.value)}
+                onClick={() => !isEdit && handleResponseTypeChange(opt.value)}
                 disabled={isEdit}
                 className={`flex-1 rounded-xl border px-3 py-2.5 text-xs font-medium text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                   responseType === opt.value ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
@@ -298,12 +309,25 @@ export default function AssignmentEditor() {
 
         {usesTemplate && (
           <div>
-            <label className={labelClass}>보고서 양식{responseType === 'essay_calculator' && ' (문항 구성)'}</label>
+            <label className={labelClass}>{responseType === 'essay_calculator' ? '문항 세트 / 보고서 양식' : '보고서 양식'}</label>
             {templates.length === 0 ? (
-              <p className="text-sm text-gray-400">활성화된 양식이 없습니다. 먼저 "보고서 양식 관리"에서 만들어주세요.</p>
+              <p className="text-sm text-gray-400">활성화된 양식이 없습니다. 먼저 "서술형 문항 관리" 또는 "보고서 양식 관리"에서 만들어주세요.</p>
             ) : (
               <select className={inputClass} value={templateId} onChange={e => setTemplateId(e.target.value)} disabled={isEdit}>
-                {templates.map(t => <option key={t.id} value={t.id}>{t.title} ({t.sections?.length || 0}개 섹션)</option>)}
+                {/* 서술형 평가-문항이면 문항 세트를 먼저 보여준다 — 두 종류 모두 같은 섹션 구조라
+                    어느 쪽을 골라도 동작은 같다. */}
+                {(responseType === 'essay_calculator' ? ['question_set', 'report'] : ['report', 'question_set']).map(kind => {
+                  const group = templates.filter(t => getTemplateKind(t) === kind)
+                  if (group.length === 0) return null
+                  const isQuestionSet = kind === TEMPLATE_KIND_QUESTION_SET
+                  return (
+                    <optgroup key={kind} label={isQuestionSet ? '서술형 문항 세트' : '보고서 양식'}>
+                      {group.map(t => (
+                        <option key={t.id} value={t.id}>{t.title} ({t.sections?.length || 0}개 {isQuestionSet ? '문항' : '섹션'})</option>
+                      ))}
+                    </optgroup>
+                  )
+                })}
               </select>
             )}
           </div>

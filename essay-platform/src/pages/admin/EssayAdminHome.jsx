@@ -51,6 +51,12 @@ export default function EssayAdminHome() {
         </div>
         <div className="flex items-center gap-3">
           <button
+            onClick={() => navigate('/admin/question-sets')}
+            className="text-xs text-violet-600 hover:text-violet-800 border border-violet-200 rounded-lg px-3 py-1.5 hover:bg-violet-50 font-medium transition-colors"
+          >
+            📝 서술형 문항 관리
+          </button>
+          <button
             onClick={() => navigate('/admin/templates')}
             className="text-xs text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-lg px-3 py-1.5 hover:bg-emerald-50 font-medium transition-colors"
           >

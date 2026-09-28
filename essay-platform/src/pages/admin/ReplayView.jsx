@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getAssignment, getSubmission, getReplayLogs, saveGrading, setScoreReleased } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
-import { sanitizeAnswerHtml } from '../../utils/sanitizeHtml.js'
+import { sanitizeAnswerHtml, sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
 import { renderMathInElement } from '../../utils/mathExpression.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
 
@@ -35,6 +35,12 @@ function FullAnswerView({ usesSections, template, submission }) {
               {showGroup && <h2 className="text-sm font-bold text-indigo-700 border-b border-indigo-100 pb-1.5 pt-2">{sec.groupLabel}</h2>}
               <div>
                 {sec.heading && <h3 className="text-sm font-bold text-gray-800 mb-1">{sec.heading}</h3>}
+                {sec.promptHtml && (
+                  <details className="mb-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                    <summary className="cursor-pointer select-none">문항 보기</summary>
+                    <div className="passage-rich mt-2 text-sm text-gray-700" dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(sec.promptHtml) }} />
+                  </details>
+                )}
                 {html ? <div className={ANSWER_HTML_CLASS} dangerouslySetInnerHTML={{ __html: html }} /> : <p className="text-sm text-gray-300">(작성 내용 없음)</p>}
               </div>
             </React.Fragment>

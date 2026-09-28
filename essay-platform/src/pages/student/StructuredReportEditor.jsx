@@ -2,6 +2,7 @@ import React from 'react'
 import EssayEditor from '../../components/EssayEditor.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { linkifyText } from '../../utils/linkifyText.js'
+import { sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
 
 function scrollToSection(id) {
   document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -80,6 +81,13 @@ export default function StructuredReportEditor({ template, sections, onChange, d
                 )}
                 {sec.guidance && (
                   <p className="text-xs text-gray-400 mb-2 whitespace-pre-wrap">{sec.guidance}</p>
+                )}
+                {/* 서술형 문항 세트(kind: 'question_set')의 문항 본문 — 그림·서식 포함 */}
+                {sec.promptHtml && (
+                  <div
+                    className="passage-rich mb-3 rounded-xl border border-gray-200 bg-white p-4 text-sm leading-relaxed text-gray-800"
+                    dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(sec.promptHtml) }}
+                  />
                 )}
                 <div className="min-h-[180px]">
                   <EssayEditor
