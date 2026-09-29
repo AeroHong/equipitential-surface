@@ -219,7 +219,7 @@ export default function ReplayPlayer({ inputEvents, keydownEvents, pasteEvents, 
       {currentHtml ? (
         <div
           ref={replayRef}
-          className="rounded-2xl border border-gray-200 bg-white px-5 py-4 min-h-[220px] text-[15px] leading-relaxed text-gray-800 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg"
+          className="rounded-2xl border border-gray-200 bg-white px-5 py-4 min-h-[220px] text-[15px] leading-relaxed text-gray-800 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline"
           dangerouslySetInnerHTML={{ __html: currentHtml }}
         />
       ) : (

@@ -12,7 +12,8 @@ export function htmlToPlainText(html) {
   const withMathTokens = html.replace(/<span\b[^>]*\bdata-math=(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/span>/gi, '¤')
   const withBreaks = withMathTokens
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|blockquote|tr)>/gi, '\n')
+    .replace(/<\/(td|th)>/gi, '\t')
   const el = document.createElement('div')
   el.innerHTML = withBreaks
   // 수식 뒤 새 줄 캐럿을 유지하는 zero-width 문자(\u200B)는 학생 분량에 포함하지 않는다.

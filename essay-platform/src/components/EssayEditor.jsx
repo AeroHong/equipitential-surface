@@ -16,6 +16,23 @@ const TOOLS = [
   { cmd: 'insertOrderedList', label: '번호 매기기 목록', glyph: '1.' }
 ]
 
+// 붙여넣은 텍스트 안의 URL을 자동으로 링크로 바꾼다(교사 지문 설명용 linkifyText.js와
+// 같은 발상이지만, 여기는 execCommand('insertHTML', ...)로 contentEditable에 바로 꽂아
+// 넣어야 해서 줄바꿈도 <br/>로 직접 변환해야 한다 — 순서: 먼저 전체를 이스케이프해서
+// 다른 글자가 HTML로 해석될 여지를 없앤 다음, URL 패턴만 <a>로 되살린다).
+const HAS_URL = /https?:\/\//i
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/g
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function autoLinkPastedText(text) {
+  return escapeHtml(text)
+    .replace(URL_PATTERN, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`)
+    .replace(/\r\n|\r|\n/g, '<br/>')
+}
+
 /**
  * 캐럿(커서) 위치를 편집 영역 시작부터의 순수 텍스트 글자 수로 환산한다 — textarea의
  * selectionStart에 대응하는 contentEditable 버전. contentEditable엔 그런 간단한 속성이
@@ -79,6 +96,10 @@ export default function EssayEditor({
   const [hoveredBlock, setHoveredBlock] = useState(null) // { el, rect }
   const [blockDrag, setBlockDrag] = useState(null) // { insertBeforeEl, indicatorTop }
 
+  // 캐럿이 표 안에 있을 때만 뜨는 행/열 편집 툴바 — 표는 어차피 el.children의 한 블록이라
+  // 위 ⋮⋮ 손잡이로도 표 전체를 옮길 수 있지만, 행/열 추가·삭제는 별도 조작이 필요하다.
+  const [activeTable, setActiveTable] = useState(null) // { el, rect }
+
   // value(저장용 — 수식이 평문 라벨로 접힌 HTML)와 el.innerHTML(화면용 — 수식이 KaTeX로
   // 렌더링된 상태)은 수식이 하나라도 있으면 원래 서로 다르다. "지금 value가 라이브 DOM을
   // 그대로 접은 것과 같은지"를 먼저 확인해서, 같으면(내가 방금 타이핑해서 생긴 echo) 화면을
@@ -139,6 +160,7 @@ export default function EssayEditor({
       openMathDialog()
       return
     }
+    if (e.key === 'Tab' && !disabled && handleTableTab(e)) return
     // Chromium은 contenteditable=false 수식 바로 뒤 Enter에서 수식 wrapper를 복제한다.
     // 이 경우만 기본 줄바꿈을 막고, 수식 하나를 유지한 채 새 줄과 캐럿을 직접 만든다.
     if (e.key === 'Enter' && insertLineBreakAfterMath(editorRef.current)) {
@@ -303,7 +325,11 @@ export default function EssayEditor({
       resultingLength: beforeLen - selectedLen + pasted.length
     })
     e.preventDefault()
-    document.execCommand('insertText', false, pasted)
+    if (HAS_URL.test(pasted)) {
+      document.execCommand('insertHTML', false, autoLinkPastedText(pasted))
+    } else {
+      document.execCommand('insertText', false, pasted)
+    }
     commit('insertFromPaste')
   }
 
@@ -371,6 +397,173 @@ export default function EssayEditor({
     [...files].filter(isImageFile).forEach(insertImage)
   }
 
+  // ── 표 삽입/편집 ──────────────────────────────────────────────────────
+  // <table>/<tr>는 네이티브 rows/cells API가 있어(thead 없이도 동작) 좌표 계산에
+  // DOM Range 없이 인덱스만으로 충분하다. 표는 el.children의 한 블록이라 위 ⋮⋮
+  // 손잡이로 전체 이동도 이미 가능하다 — 여기서는 행/열 추가·삭제만 다룬다.
+  function makeCell() {
+    const td = document.createElement('td')
+    td.appendChild(document.createElement('br'))
+    return td
+  }
+
+  function getActiveCell(table) {
+    const sel = window.getSelection()
+    const node = sel?.anchorNode
+    const host = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
+    const cell = host?.closest?.('td')
+    const row = cell?.closest('tr')
+    if (!cell || !row || !table.contains(row)) return null
+    return { row, cell, rowIndex: [...table.rows].indexOf(row), cellIndex: [...row.cells].indexOf(cell) }
+  }
+
+  function syncActiveTable() {
+    const sel = window.getSelection()
+    const node = sel?.rangeCount ? sel.anchorNode : null
+    const host = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
+    const table = host?.closest?.('table')
+    if (table && editorRef.current?.contains(table)) {
+      setActiveTable(prev => (prev?.el === table ? prev : { el: table, rect: table.getBoundingClientRect() }))
+    } else {
+      setActiveTable(null)
+    }
+  }
+
+  function insertTable() {
+    if (disabled) return
+    const el = editorRef.current
+    el?.focus()
+    const table = document.createElement('table')
+    const tbody = document.createElement('tbody')
+    for (let r = 0; r < 3; r++) {
+      const tr = document.createElement('tr')
+      for (let c = 0; c < 3; c++) tr.appendChild(makeCell())
+      tbody.appendChild(tr)
+    }
+    table.appendChild(tbody)
+    const trailingP = document.createElement('p')
+    trailingP.appendChild(document.createElement('br'))
+    const frag = document.createDocumentFragment()
+    frag.appendChild(table)
+    frag.appendChild(trailingP)
+
+    const sel = window.getSelection()
+    const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+    if (range && el.contains(range.startContainer)) {
+      range.deleteContents()
+      range.insertNode(frag)
+    } else {
+      el.appendChild(frag)
+    }
+    putCaretIn(table.rows[0].cells[0])
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('insertTable')
+  }
+
+  function addTableRow() {
+    const table = activeTable?.el
+    if (!table) return
+    const coords = getActiveCell(table)
+    const refRow = coords?.row || table.rows[table.rows.length - 1]
+    const newRow = document.createElement('tr')
+    const colCount = refRow.cells.length
+    for (let i = 0; i < colCount; i++) newRow.appendChild(makeCell())
+    refRow.after(newRow)
+    putCaretIn(newRow.cells[0])
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('insertTableRow')
+  }
+
+  function removeTableRow() {
+    const table = activeTable?.el
+    if (!table || table.rows.length <= 1) return
+    const coords = getActiveCell(table)
+    const row = coords?.row || table.rows[table.rows.length - 1]
+    const rowIndex = coords?.rowIndex ?? table.rows.length - 1
+    const focusRow = table.rows[rowIndex + 1] || table.rows[rowIndex - 1]
+    row.remove()
+    if (focusRow) putCaretIn(focusRow.cells[0])
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('deleteTableRow')
+  }
+
+  function addTableColumn() {
+    const table = activeTable?.el
+    if (!table) return
+    const coords = getActiveCell(table)
+    const insertIndex = coords ? coords.cellIndex : (table.rows[0]?.cells.length || 1) - 1
+    ;[...table.rows].forEach(row => {
+      const cell = row.cells[insertIndex]
+      const newCell = makeCell()
+      if (cell) cell.after(newCell)
+      else row.appendChild(newCell)
+    })
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('insertTableColumn')
+  }
+
+  function removeTableColumn() {
+    const table = activeTable?.el
+    if (!table || (table.rows[0]?.cells.length || 0) <= 1) return
+    const coords = getActiveCell(table)
+    const cellIndex = coords ? coords.cellIndex : table.rows[0].cells.length - 1
+    ;[...table.rows].forEach(row => row.cells[cellIndex]?.remove())
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('deleteTableColumn')
+  }
+
+  function deleteTable() {
+    const table = activeTable?.el
+    if (!table) return
+    table.remove()
+    setActiveTable(null)
+    editorRef.current?.focus()
+    commit('deleteTable')
+  }
+
+  /** Tab으로 표 셀 사이를 이동한다 — 마지막 셀에서 Tab을 누르면 새 행을 만들어 이어준다. */
+  function handleTableTab(e) {
+    const node = window.getSelection()?.anchorNode
+    const host = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
+    const cell = host?.closest?.('td')
+    const table = cell?.closest('table')
+    if (!cell || !table || !editorRef.current?.contains(table)) return false
+    e.preventDefault()
+    const row = cell.closest('tr')
+    const cellIndex = [...row.cells].indexOf(cell)
+    const rowIndex = [...table.rows].indexOf(row)
+
+    if (e.shiftKey) {
+      let targetRow = row
+      let targetIndex = cellIndex - 1
+      if (targetIndex < 0) {
+        targetRow = table.rows[rowIndex - 1]
+        targetIndex = targetRow ? targetRow.cells.length - 1 : -1
+      }
+      if (targetRow && targetIndex >= 0) putCaretIn(targetRow.cells[targetIndex])
+      return true
+    }
+
+    let targetRow = row
+    let targetIndex = cellIndex + 1
+    if (targetIndex >= row.cells.length) {
+      targetRow = table.rows[rowIndex + 1]
+      targetIndex = 0
+    }
+    if (!targetRow) {
+      const newRow = document.createElement('tr')
+      const colCount = row.cells.length
+      for (let i = 0; i < colCount; i++) newRow.appendChild(makeCell())
+      row.after(newRow)
+      targetRow = newRow
+      targetIndex = 0
+      setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+      commit('insertTableRow')
+    }
+    putCaretIn(targetRow.cells[targetIndex])
+    return true
+  }
+
   // ── 블록 드래그 재배치(⋮⋮) ────────────────────────────────────────────
   const findTopBlockAtY = useCallback((y) => {
     const el = editorRef.current
@@ -411,6 +604,7 @@ export default function EssayEditor({
   function handleEditorClick(e) {
     const math = e.target.closest?.('[data-math]')
     if (math) { e.preventDefault(); openExistingMath(math) }
+    syncActiveTable()
   }
 
   function handleEditorMouseLeave() {
@@ -429,6 +623,19 @@ export default function EssayEditor({
       window.removeEventListener('scroll', remeasure, true)
     }
   }, [hoveredBlock?.el])
+
+  useEffect(() => {
+    if (!activeTable) return
+    const remeasure = () => {
+      setActiveTable(prev => (prev?.el?.isConnected ? { el: prev.el, rect: prev.el.getBoundingClientRect() } : null))
+    }
+    window.addEventListener('resize', remeasure)
+    window.addEventListener('scroll', remeasure, true)
+    return () => {
+      window.removeEventListener('resize', remeasure)
+      window.removeEventListener('scroll', remeasure, true)
+    }
+  }, [activeTable?.el])
 
   /**
    * 손잡이 pointerdown — 거의 안 움직이면(4px 미만) 클릭으로 보고 캐럿을 그 블록
@@ -525,6 +732,16 @@ export default function EssayEditor({
         >
           🖼
         </button>
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={insertTable}
+          disabled={disabled}
+          title="표 삽입"
+          className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          ▦
+        </button>
         {uploading > 0 && <span className="text-xs text-gray-400 ml-1">이미지 올리는 중…</span>}
         {uploadError && <span className="text-xs text-red-500 ml-1">{uploadError}</span>}
       </div>
@@ -553,10 +770,12 @@ export default function EssayEditor({
           onDrop={handleDrop}
           onDragOver={e => e.preventDefault()}
           onKeyDown={handleKeyDown}
+          onKeyUp={syncActiveTable}
           onClick={handleEditorClick}
+          onBlur={() => setActiveTable(null)}
           onCompositionStart={() => { isComposingRef.current = true }}
           onCompositionEnd={handleCompositionEnd}
-          className={`relative min-h-[320px] w-full rounded-2xl border px-5 py-4 text-[15px] leading-relaxed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg ${
+          className={`relative min-h-[320px] w-full rounded-2xl border px-5 py-4 text-[15px] leading-relaxed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline ${
             disabled ? 'bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 border-gray-200'
           }`}
         />
@@ -592,6 +811,28 @@ export default function EssayEditor({
             }}
             className="h-0.5 bg-blue-500 rounded pointer-events-none"
           />
+        )}
+
+        {/* 캐럿이 표 안에 있을 때만 뜨는 행/열 편집 툴바 — 표 왼쪽 위 바깥에 붙는다. */}
+        {activeTable && !disabled && (
+          <div
+            onMouseDown={e => e.preventDefault()}
+            style={{
+              position: 'fixed',
+              top: activeTable.rect.top - 32,
+              left: activeTable.rect.left,
+              zIndex: 1200
+            }}
+            className="flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1 py-1 shadow-sm text-[11px] text-gray-600"
+          >
+            <button type="button" onClick={addTableRow} title="행 추가" className="px-1.5 py-0.5 rounded hover:bg-gray-100">+행</button>
+            <button type="button" onClick={removeTableRow} title="행 삭제" className="px-1.5 py-0.5 rounded hover:bg-gray-100">-행</button>
+            <span className="w-px h-3 bg-gray-200" />
+            <button type="button" onClick={addTableColumn} title="열 추가" className="px-1.5 py-0.5 rounded hover:bg-gray-100">+열</button>
+            <button type="button" onClick={removeTableColumn} title="열 삭제" className="px-1.5 py-0.5 rounded hover:bg-gray-100">-열</button>
+            <span className="w-px h-3 bg-gray-200" />
+            <button type="button" onClick={deleteTable} title="표 삭제" className="px-1.5 py-0.5 rounded hover:bg-red-50 text-red-500">삭제</button>
+          </div>
         )}
       </div>
 

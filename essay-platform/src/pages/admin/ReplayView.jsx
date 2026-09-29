@@ -6,7 +6,7 @@ import { sanitizeAnswerHtml, sanitizePassageHtml } from '../../utils/sanitizeHtm
 import { renderMathInElement } from '../../utils/mathExpression.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
 
-const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg'
+const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline'
 
 // "섹션 선택" 드롭다운에서 개별 섹션이 아니라 전체를 한 번에 보고 싶을 때 고르는 값.
 const ALL_SECTIONS = '__all__'
