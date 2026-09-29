@@ -73,11 +73,13 @@ export function isEmptyHtml(html) {
 // devtools로 Firestore 문서에 직접 위험한 태그/속성을 심어도, 교사가 리플레이 화면에서
 // 그 HTML을 dangerouslySetInnerHTML로 그릴 때 실행되지 않도록 렌더링 직전에 반드시
 // 이 함수를 거친다(학생 → 교사로 신뢰 경계를 넘는 지점이라 여기서 막아야 한다).
-const ANSWER_ALLOWED_TAGS = ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'ul', 'ol', 'li', 'img', 'a', 'table', 'tbody', 'tr', 'td']
+const ANSWER_ALLOWED_TAGS = ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'ul', 'ol', 'li', 'img', 'a', 'table', 'colgroup', 'col', 'tbody', 'tr', 'td']
 // data-math에는 앱이 만든 base64 수식 데이터만 저장한다(원본 LaTeX 또는 레거시 템플릿
 // 구조). data-math-format="tex"가 신규(LaTeX) 형식, 없으면 레거시 형식 — 렌더러가 이를
 // 다시 읽어 KaTeX로 그리므로, KaTeX가 생성한 내부 마크업 자체를 Firestore에 저장할 필요는 없다.
-const ANSWER_ALLOWED_ATTR = ['src', 'alt', 'width', 'class', 'data-math', 'data-math-mode', 'data-math-format', 'contenteditable', 'role', 'tabindex', 'aria-label', 'href', 'target', 'rel']
+// style은 통째로 허용하지 않고 width/height만 남긴다(아래 STYLE_ATTR 처리) — 표/열/행 크기
+// 조정(EssayEditor.jsx)에 필요한 최소한만 연다.
+const ANSWER_ALLOWED_ATTR = ['src', 'alt', 'width', 'class', 'data-math', 'data-math-mode', 'data-math-format', 'contenteditable', 'role', 'tabindex', 'aria-label', 'href', 'target', 'rel', 'style']
 
 /** 학생 답안 HTML을 안전한 부분집합으로 정제한다(저장 시/렌더 시 이중으로 호출해도 안전, 멱등). */
 export function sanitizeAnswerHtml(html) {
@@ -88,5 +90,12 @@ export function sanitizeAnswerHtml(html) {
     // data:·javascript: 주소를 막는다 — 이미지는 Firebase Storage 다운로드 URL(https)만 쓴다.
     ALLOWED_URI_REGEXP: /^(?:https?:)/i,
     ADD_URI_SAFE_ATTR: ['width']
+  }).replace(STYLE_ATTR, (match, value) => {
+    const width = /(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?px)/i.exec(value)
+    const height = /(?:^|;)\s*height\s*:\s*(\d+(?:\.\d+)?px)/i.exec(value)
+    const parts = []
+    if (width) parts.push(`width:${width[1]}`)
+    if (height) parts.push(`height:${height[1]}`)
+    return parts.length ? ` style="${parts.join(';')}"` : ''
   })
 }

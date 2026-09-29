@@ -400,11 +400,30 @@ export default function EssayEditor({
   // ── 표 삽입/편집 ──────────────────────────────────────────────────────
   // <table>/<tr>는 네이티브 rows/cells API가 있어(thead 없이도 동작) 좌표 계산에
   // DOM Range 없이 인덱스만으로 충분하다. 표는 el.children의 한 블록이라 위 ⋮⋮
-  // 손잡이로 전체 이동도 이미 가능하다 — 여기서는 행/열 추가·삭제만 다룬다.
+  // 손잡이로 전체 이동도 이미 가능하다 — 여기서는 행/열 추가·삭제와 크기 조정을 다룬다.
+  //
+  // 열 너비는 <colgroup><col style="width:...px"></colgroup>로 관리한다(table-layout:fixed와
+  // 짝을 이뤄야 각 열 너비가 셀 내용과 무관하게 그대로 지켜진다) — 셀(<td>)에는 너비를
+  // 두지 않는다. 행 높이는 <tr style="height:...px">에 직접 둔다(표 전체 크기 조절 핸들은
+  // 모든 열 너비를 비율대로 함께 바꾸지만, 행 높이는 서로 독립적이라 한 행씩만 조정한다).
   function makeCell() {
     const td = document.createElement('td')
     td.appendChild(document.createElement('br'))
     return td
+  }
+
+  function makeCol(widthPx) {
+    const col = document.createElement('col')
+    col.style.width = `${Math.max(30, Math.round(widthPx))}px`
+    return col
+  }
+
+  /** colgroup의 열 너비 합으로 table의 style.width를 다시 맞춘다(열 추가/삭제 후 호출). */
+  function syncTableWidth(table) {
+    const colgroup = table.querySelector('colgroup')
+    if (!colgroup) return
+    const total = [...colgroup.children].reduce((sum, c) => sum + (parseFloat(c.style.width) || 0), 0)
+    if (total > 0) table.style.width = `${Math.round(total)}px`
   }
 
   function getActiveCell(table) {
@@ -433,7 +452,13 @@ export default function EssayEditor({
     if (disabled) return
     const el = editorRef.current
     el?.focus()
+    const totalWidth = Math.max(240, (el?.clientWidth || 560) - 4)
+    const colWidth = totalWidth / 3
     const table = document.createElement('table')
+    table.style.width = `${Math.round(totalWidth)}px`
+    const colgroup = document.createElement('colgroup')
+    for (let c = 0; c < 3; c++) colgroup.appendChild(makeCol(colWidth))
+    table.appendChild(colgroup)
     const tbody = document.createElement('tbody')
     for (let r = 0; r < 3; r++) {
       const tr = document.createElement('tr')
@@ -492,12 +517,18 @@ export default function EssayEditor({
     if (!table) return
     const coords = getActiveCell(table)
     const insertIndex = coords ? coords.cellIndex : (table.rows[0]?.cells.length || 1) - 1
+    const colgroup = table.querySelector('colgroup')
+    const refCol = colgroup?.children[insertIndex]
+    const newCol = makeCol(refCol ? parseFloat(refCol.style.width) || 100 : 100)
+    if (refCol) refCol.after(newCol)
+    else colgroup?.appendChild(newCol)
     ;[...table.rows].forEach(row => {
       const cell = row.cells[insertIndex]
       const newCell = makeCell()
       if (cell) cell.after(newCell)
       else row.appendChild(newCell)
     })
+    syncTableWidth(table)
     setActiveTable({ el: table, rect: table.getBoundingClientRect() })
     commit('insertTableColumn')
   }
@@ -507,7 +538,9 @@ export default function EssayEditor({
     if (!table || (table.rows[0]?.cells.length || 0) <= 1) return
     const coords = getActiveCell(table)
     const cellIndex = coords ? coords.cellIndex : table.rows[0].cells.length - 1
+    table.querySelector('colgroup')?.children[cellIndex]?.remove()
     ;[...table.rows].forEach(row => row.cells[cellIndex]?.remove())
+    syncTableWidth(table)
     setActiveTable({ el: table, rect: table.getBoundingClientRect() })
     commit('deleteTableColumn')
   }
@@ -519,6 +552,92 @@ export default function EssayEditor({
     setActiveTable(null)
     editorRef.current?.focus()
     commit('deleteTable')
+  }
+
+  /** 표 오른쪽 아래 모서리 손잡이 — 모든 열 너비를 같은 비율로 늘리거나 줄인다. */
+  function startTableResize(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    const table = activeTable?.el
+    const colgroup = table?.querySelector('colgroup')
+    if (!table || !colgroup) return
+    const cols = [...colgroup.children]
+    const startWidths = cols.map(c => parseFloat(c.style.width) || 0)
+    const startTableWidth = startWidths.reduce((a, b) => a + b, 0)
+    if (startTableWidth <= 0) return
+    const startX = e.clientX
+    const maxWidth = editorRef.current?.clientWidth || 900
+    const minTotal = 30 * cols.length
+
+    function onMove(ev) {
+      const nextWidth = Math.max(minTotal, Math.min(maxWidth, startTableWidth + (ev.clientX - startX)))
+      const ratio = nextWidth / startTableWidth
+      cols.forEach((c, i) => { c.style.width = `${Math.max(30, Math.round(startWidths[i] * ratio))}px` })
+      table.style.width = `${Math.round(nextWidth)}px`
+      setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      commit('resizeTable')
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  /** 두 열 사이의 경계 손잡이 — 표 전체 너비는 그대로 두고 양옆 두 열 사이에서만 너비를 주고받는다. */
+  function startColumnResize(e, colIndex) {
+    e.preventDefault()
+    e.stopPropagation()
+    const table = activeTable?.el
+    const colgroup = table?.querySelector('colgroup')
+    const colA = colgroup?.children[colIndex]
+    const colB = colgroup?.children[colIndex + 1]
+    if (!table || !colA || !colB) return
+    const startWidthA = parseFloat(colA.style.width) || 0
+    const startWidthB = parseFloat(colB.style.width) || 0
+    const startX = e.clientX
+    const MIN = 30
+
+    function onMove(ev) {
+      const raw = ev.clientX - startX
+      const delta = Math.max(MIN - startWidthA, Math.min(startWidthB - MIN, raw))
+      colA.style.width = `${Math.round(startWidthA + delta)}px`
+      colB.style.width = `${Math.round(startWidthB - delta)}px`
+      setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      commit('resizeTableColumn')
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  /** 행 아래쪽 경계 손잡이 — 그 행의 높이만 바꾼다(다른 행과는 독립적). */
+  function startRowResize(e, rowIndex) {
+    e.preventDefault()
+    e.stopPropagation()
+    const table = activeTable?.el
+    const row = table?.rows[rowIndex]
+    if (!table || !row) return
+    const startY = e.clientY
+    const startHeight = row.getBoundingClientRect().height
+    const MIN = 24
+
+    function onMove(ev) {
+      const nextHeight = Math.max(MIN, startHeight + (ev.clientY - startY))
+      row.style.height = `${Math.round(nextHeight)}px`
+      setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      commit('resizeTableRow')
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   /** Tab으로 표 셀 사이를 이동한다 — 마지막 셀에서 Tab을 누르면 새 행을 만들어 이어준다. */
@@ -696,6 +815,14 @@ export default function EssayEditor({
   const charCount = plainText.length
   const progressPct = wordLimitGuide ? Math.min(100, Math.round((charCount / wordLimitGuide) * 100)) : 0
 
+  // 표 크기 조정 손잡이 위치 — 매 렌더마다 실측한다(드래그 도중에도 activeTable이 갱신되며
+  // 같이 다시 그려져야 손잡이가 표를 계속 따라다닌다).
+  const activeTableRows = activeTable ? [...activeTable.el.rows] : []
+  const colBoundaries = activeTableRows[0]
+    ? [...activeTableRows[0].cells].slice(0, -1).map(c => c.getBoundingClientRect().right)
+    : []
+  const rowBoundaries = activeTableRows.map(r => r.getBoundingClientRect().bottom)
+
   return (
     <div className="flex-shrink-0">
       <div className="flex items-center gap-1 mb-1.5">
@@ -775,7 +902,7 @@ export default function EssayEditor({
           onBlur={() => setActiveTable(null)}
           onCompositionStart={() => { isComposingRef.current = true }}
           onCompositionEnd={handleCompositionEnd}
-          className={`relative min-h-[320px] w-full rounded-2xl border px-5 py-4 text-[15px] leading-relaxed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline ${
+          className={`relative min-h-[320px] w-full rounded-2xl border px-5 py-4 text-[15px] leading-relaxed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:table-fixed [&_table]:mx-auto [&_table]:max-w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline ${
             disabled ? 'bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 border-gray-200'
           }`}
         />
@@ -833,6 +960,59 @@ export default function EssayEditor({
             <span className="w-px h-3 bg-gray-200" />
             <button type="button" onClick={deleteTable} title="표 삭제" className="px-1.5 py-0.5 rounded hover:bg-red-50 text-red-500">삭제</button>
           </div>
+        )}
+
+        {/* 열 경계 드래그 손잡이 — 표 전체 높이만큼 내려오는 얇은 세로 막대. */}
+        {activeTable && !disabled && colBoundaries.map((x, i) => (
+          <div
+            key={`col-resize-${i}`}
+            onPointerDown={e => startColumnResize(e, i)}
+            style={{
+              position: 'fixed',
+              top: activeTable.rect.top,
+              left: x - 2,
+              width: 4,
+              height: activeTable.rect.height,
+              zIndex: 1150,
+              cursor: 'col-resize'
+            }}
+            className="hover:bg-blue-300/50"
+          />
+        ))}
+
+        {/* 행 경계 드래그 손잡이 — 표 전체 너비만큼 이어지는 얇은 가로 막대. */}
+        {activeTable && !disabled && rowBoundaries.map((y, i) => (
+          <div
+            key={`row-resize-${i}`}
+            onPointerDown={e => startRowResize(e, i)}
+            style={{
+              position: 'fixed',
+              top: y - 2,
+              left: activeTable.rect.left,
+              width: activeTable.rect.width,
+              height: 4,
+              zIndex: 1150,
+              cursor: 'row-resize'
+            }}
+            className="hover:bg-blue-300/50"
+          />
+        ))}
+
+        {/* 표 전체 크기 조절 손잡이 — 오른쪽 아래 모서리, 모든 열 너비를 비율대로 바꾼다. */}
+        {activeTable && !disabled && (
+          <div
+            onPointerDown={startTableResize}
+            style={{
+              position: 'fixed',
+              top: activeTable.rect.bottom - 6,
+              left: activeTable.rect.right - 6,
+              width: 12,
+              height: 12,
+              zIndex: 1250,
+              cursor: 'ew-resize'
+            }}
+            className="rounded-full bg-blue-500 border-2 border-white shadow"
+          />
         )}
       </div>
 
