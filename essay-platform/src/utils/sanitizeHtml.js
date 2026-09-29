@@ -79,7 +79,7 @@ const ANSWER_ALLOWED_TAGS = ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em',
 // 다시 읽어 KaTeX로 그리므로, KaTeX가 생성한 내부 마크업 자체를 Firestore에 저장할 필요는 없다.
 // style은 통째로 허용하지 않고 width/height만 남긴다(아래 STYLE_ATTR 처리) — 표/열/행 크기
 // 조정(EssayEditor.jsx)에 필요한 최소한만 연다.
-const ANSWER_ALLOWED_ATTR = ['src', 'alt', 'width', 'class', 'data-math', 'data-math-mode', 'data-math-format', 'contenteditable', 'role', 'tabindex', 'aria-label', 'href', 'target', 'rel', 'style']
+const ANSWER_ALLOWED_ATTR = ['src', 'alt', 'width', 'class', 'data-math', 'data-math-mode', 'data-math-format', 'contenteditable', 'role', 'tabindex', 'aria-label', 'href', 'target', 'rel', 'style', 'colspan', 'rowspan']
 
 /** 학생 답안 HTML을 안전한 부분집합으로 정제한다(저장 시/렌더 시 이중으로 호출해도 안전, 멱등). */
 export function sanitizeAnswerHtml(html) {

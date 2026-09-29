@@ -58,6 +58,97 @@ function putCaretIn(target, atEnd = false) {
   sel.addRange(range)
 }
 
+// ── 표의 "논리 격자" 계산 — 셀 병합(colspan/rowspan) 지원의 핵심 ──────────────
+// <tr>.cells는 실제로 존재하는 <td> DOM만 나열해서, 병합된 셀이 하나라도 있으면
+// "몇 번째 행/열"이라는 감각이 DOM 인덱스와 어긋난다(예: 첫 행 첫 셀이 colspan=2면
+// 둘째 행의 cells[1]은 논리적으로 셋째 열이다). buildGrid()가 실제 렌더링 격자를
+// 그대로 흉내내서 grid[row][col] = {cell, originRow, originCol}(그 칸을 차지한 실제
+// <td>와 그 <td>가 "시작"하는 논리 좌표)를 채워주면, 이후 모든 열/행 계산은 이
+// origin 좌표만 비교하면 되고 DOM 인덱스를 다시 셀 필요가 없다.
+function buildGrid(table) {
+  const colCount = table.querySelector('colgroup')?.children.length || (table.rows[0]?.cells.length || 0)
+  const rows = [...table.rows]
+  const grid = rows.map(() => new Array(colCount).fill(null))
+  rows.forEach((row, r) => {
+    let c = 0
+    ;[...row.cells].forEach(cell => {
+      while (c < colCount && grid[r][c]) c++
+      const colspan = cell.colSpan || 1
+      const rowspan = cell.rowSpan || 1
+      for (let dr = 0; dr < rowspan; dr++) {
+        for (let dc = 0; dc < colspan; dc++) {
+          if (grid[r + dr]) grid[r + dr][c + dc] = { cell, originRow: r, originCol: c }
+        }
+      }
+      c += colspan
+    })
+  })
+  return { grid, colCount, rowCount: rows.length }
+}
+
+/** 격자에서 이 <td>가 시작하는 논리 좌표를 찾는다(어느 칸에서 찾든 값은 같다). */
+function findCellOrigin(grid, cellEl) {
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < grid[r].length; c++) {
+      const occ = grid[r][c]
+      if (occ && occ.cell === cellEl) return { row: occ.originRow, col: occ.originCol }
+    }
+  }
+  return null
+}
+
+/** targetRow에서 "논리 열 번호가 col보다 큰 첫 실제 <td>"를 찾는다 — 그 앞에 새 셀을 끼워 넣기 위함. */
+function findInsertPositionInRow(grid, rowIndex, col) {
+  const row = grid[rowIndex]
+  if (!row) return null
+  const seen = new Set()
+  for (let c = 0; c < row.length; c++) {
+    const occ = row[c]
+    if (!occ || occ.originRow !== rowIndex || seen.has(occ.cell)) continue
+    seen.add(occ.cell)
+    if (occ.originCol > col) return occ.cell
+  }
+  return null
+}
+
+/** 논리 열 colIndex의 오른쪽 경계 x좌표 — 그 경계에서 실제로 끝나는 셀이 있는 행을 찾아 잰다.
+ * 모든 행에서 그 경계를 병합 셀이 덮고 있으면(끝나는 셀이 없으면) null(핸들을 그리지 않음). */
+function colRightX(grid, colIndex) {
+  for (let r = 0; r < grid.length; r++) {
+    const occ = grid[r][colIndex]
+    if (!occ) continue
+    if (occ.originCol + (occ.cell.colSpan || 1) - 1 === colIndex) return occ.cell.getBoundingClientRect().right
+  }
+  return null
+}
+
+/** 논리 행 rowIndex의 아래쪽 경계 y좌표 — colRightX와 같은 방식. */
+function rowBottomY(grid, rowIndex) {
+  const row = grid[rowIndex]
+  if (!row) return null
+  for (let c = 0; c < row.length; c++) {
+    const occ = row[c]
+    if (!occ) continue
+    if (occ.originRow + (occ.cell.rowSpan || 1) - 1 === rowIndex) return occ.cell.getBoundingClientRect().bottom
+  }
+  return null
+}
+
+/** 선택한 사각 범위(r1..r2, c1..c2) 안의 모든 셀이 그 범위 밖으로 비어져 나가지 않는지 확인한다
+ * — 스프레드시트와 같은 규칙: 범위 경계를 가로지르는 병합 셀이 하나라도 있으면 병합할 수 없다. */
+function canMergeSelection(grid, sel) {
+  for (let r = sel.r1; r <= sel.r2; r++) {
+    for (let c = sel.c1; c <= sel.c2; c++) {
+      const occ = grid[r]?.[c]
+      if (!occ) return false
+      const rowEnd = occ.originRow + (occ.cell.rowSpan || 1) - 1
+      const colEnd = occ.originCol + (occ.cell.colSpan || 1) - 1
+      if (occ.originRow < sel.r1 || occ.originCol < sel.c1 || rowEnd > sel.r2 || colEnd > sel.c2) return false
+    }
+  }
+  return true
+}
+
 /**
  * 서식(굵게/기울임/밑줄/목록) + 이미지 삽입/재배치가 가능한 논술 작성 에디터.
  * contentEditable + execCommand 기반(관리자 지문 에디터인 RichTextEditor.jsx와 같은 방식이지만,
@@ -99,6 +190,8 @@ export default function EssayEditor({
   // 캐럿이 표 안에 있을 때만 뜨는 행/열 편집 툴바 — 표는 어차피 el.children의 한 블록이라
   // 위 ⋮⋮ 손잡이로도 표 전체를 옮길 수 있지만, 행/열 추가·삭제는 별도 조작이 필요하다.
   const [activeTable, setActiveTable] = useState(null) // { el, rect }
+  // 여러 셀을 드래그로 선택한 상태(병합용) — 좌표는 모두 buildGrid() 기준 논리 좌표.
+  const [cellSelection, setCellSelection] = useState(null) // { table, r1, c1, r2, c2 }
 
   // value(저장용 — 수식이 평문 라벨로 접힌 HTML)와 el.innerHTML(화면용 — 수식이 KaTeX로
   // 렌더링된 상태)은 수식이 하나라도 있으면 원래 서로 다르다. "지금 value가 라이브 DOM을
@@ -426,14 +519,17 @@ export default function EssayEditor({
     if (total > 0) table.style.width = `${Math.round(total)}px`
   }
 
+  /** 캐럿이 있는 셀의 논리 좌표(rowIndex/colIndex, buildGrid 기준)를 찾는다. */
   function getActiveCell(table) {
     const sel = window.getSelection()
     const node = sel?.anchorNode
     const host = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
     const cell = host?.closest?.('td')
-    const row = cell?.closest('tr')
-    if (!cell || !row || !table.contains(row)) return null
-    return { row, cell, rowIndex: [...table.rows].indexOf(row), cellIndex: [...row.cells].indexOf(cell) }
+    if (!cell || !table.contains(cell)) return null
+    const { grid } = buildGrid(table)
+    const origin = findCellOrigin(grid, cell)
+    if (!origin) return null
+    return { cell, row: cell.closest('tr'), rowIndex: origin.row, colIndex: origin.col }
   }
 
   function syncActiveTable() {
@@ -443,8 +539,10 @@ export default function EssayEditor({
     const table = host?.closest?.('table')
     if (table && editorRef.current?.contains(table)) {
       setActiveTable(prev => (prev?.el === table ? prev : { el: table, rect: table.getBoundingClientRect() }))
+      setCellSelection(prev => (prev?.table === table ? prev : null))
     } else {
       setActiveTable(null)
+      setCellSelection(null)
     }
   }
 
@@ -485,64 +583,180 @@ export default function EssayEditor({
     commit('insertTable')
   }
 
+  /** 병합된 셀이 있어도 안전하도록, 삽입 지점을 지나는 rowspan은 셀을 새로 만드는 대신
+   * 그 rowspan을 한 칸 늘려서 흡수한다(그래야 표가 어긋나지 않는다). */
   function addTableRow() {
     const table = activeTable?.el
     if (!table) return
+    const { grid, colCount } = buildGrid(table)
     const coords = getActiveCell(table)
-    const refRow = coords?.row || table.rows[table.rows.length - 1]
+    const insertAfter = coords ? coords.rowIndex : grid.length - 1
     const newRow = document.createElement('tr')
-    const colCount = refRow.cells.length
-    for (let i = 0; i < colCount; i++) newRow.appendChild(makeCell())
-    refRow.after(newRow)
-    putCaretIn(newRow.cells[0])
+    let c = 0
+    while (c < colCount) {
+      const occ = grid[insertAfter][c]
+      const spanEnd = occ ? occ.originRow + (occ.cell.rowSpan || 1) - 1 : insertAfter
+      if (occ && spanEnd > insertAfter) {
+        occ.cell.rowSpan = (occ.cell.rowSpan || 1) + 1
+        c = occ.originCol + (occ.cell.colSpan || 1)
+      } else {
+        newRow.appendChild(makeCell())
+        c += 1
+      }
+    }
+    table.rows[insertAfter].after(newRow)
+    putCaretIn(newRow.cells[0] || newRow)
+    setCellSelection(null)
     setActiveTable({ el: table, rect: table.getBoundingClientRect() })
     commit('insertTableRow')
   }
 
+  /** 이 행에서 "시작해서" 아래로 더 뻗어나가는 병합 셀이 있으면 먼저 분할해야 지울 수 있다
+   * (그 셀이 사라지면 내용과 병합 범위를 어디로 보내야 할지 애매해지기 때문) — 단순히
+   * 지나가기만 하는(다른 행에서 시작한) 병합은 rowspan만 줄이고 그대로 삭제 가능하다. */
   function removeTableRow() {
     const table = activeTable?.el
     if (!table || table.rows.length <= 1) return
+    const { grid, colCount } = buildGrid(table)
     const coords = getActiveCell(table)
-    const row = coords?.row || table.rows[table.rows.length - 1]
-    const rowIndex = coords?.rowIndex ?? table.rows.length - 1
+    const rowIndex = coords ? coords.rowIndex : grid.length - 1
+    const blocked = grid[rowIndex]?.some(occ => occ && occ.originRow === rowIndex && (occ.cell.rowSpan || 1) > 1)
+    if (blocked) return
+    const shrunk = new Set()
+    for (let c = 0; c < colCount; c++) {
+      const occ = grid[rowIndex][c]
+      if (occ && occ.originRow < rowIndex && !shrunk.has(occ.cell)) {
+        shrunk.add(occ.cell)
+        occ.cell.rowSpan = (occ.cell.rowSpan || 1) - 1
+      }
+    }
     const focusRow = table.rows[rowIndex + 1] || table.rows[rowIndex - 1]
-    row.remove()
-    if (focusRow) putCaretIn(focusRow.cells[0])
+    table.rows[rowIndex].remove()
+    if (focusRow) putCaretIn(focusRow.cells[0] || focusRow)
+    setCellSelection(null)
     setActiveTable({ el: table, rect: table.getBoundingClientRect() })
     commit('deleteTableRow')
   }
 
+  /** addTableRow와 같은 이유로, colIndex를 가로지르는 병합은 colSpan을 늘려 흡수한다. */
   function addTableColumn() {
     const table = activeTable?.el
     if (!table) return
+    const { grid, rowCount, colCount } = buildGrid(table)
     const coords = getActiveCell(table)
-    const insertIndex = coords ? coords.cellIndex : (table.rows[0]?.cells.length || 1) - 1
+    const insertIndex = coords ? coords.colIndex : colCount - 1
+    const processed = new Set()
+    for (let r = 0; r < rowCount; r++) {
+      const occ = grid[r][insertIndex]
+      if (!occ || processed.has(occ.cell)) continue
+      processed.add(occ.cell)
+      const spanEnd = occ.originCol + (occ.cell.colSpan || 1) - 1
+      if (spanEnd > insertIndex) occ.cell.colSpan = (occ.cell.colSpan || 1) + 1
+      else occ.cell.after(makeCell())
+    }
     const colgroup = table.querySelector('colgroup')
     const refCol = colgroup?.children[insertIndex]
     const newCol = makeCol(refCol ? parseFloat(refCol.style.width) || 100 : 100)
     if (refCol) refCol.after(newCol)
     else colgroup?.appendChild(newCol)
-    ;[...table.rows].forEach(row => {
-      const cell = row.cells[insertIndex]
-      const newCell = makeCell()
-      if (cell) cell.after(newCell)
-      else row.appendChild(newCell)
-    })
     syncTableWidth(table)
+    setCellSelection(null)
     setActiveTable({ el: table, rect: table.getBoundingClientRect() })
     commit('insertTableColumn')
   }
 
+  /** removeTableRow와 같은 규칙: 이 열에서 시작해 더 뻗어나가는 병합 셀은 먼저 분할해야 한다. */
   function removeTableColumn() {
     const table = activeTable?.el
-    if (!table || (table.rows[0]?.cells.length || 0) <= 1) return
+    if (!table) return
+    const { grid, rowCount, colCount } = buildGrid(table)
+    if (colCount <= 1) return
     const coords = getActiveCell(table)
-    const cellIndex = coords ? coords.cellIndex : table.rows[0].cells.length - 1
-    table.querySelector('colgroup')?.children[cellIndex]?.remove()
-    ;[...table.rows].forEach(row => row.cells[cellIndex]?.remove())
+    const colIndex = coords ? coords.colIndex : colCount - 1
+    const blocked = grid.some(row => {
+      const occ = row?.[colIndex]
+      return occ && occ.originCol === colIndex && (occ.cell.colSpan || 1) > 1
+    })
+    if (blocked) return
+    const processed = new Set()
+    for (let r = 0; r < rowCount; r++) {
+      const occ = grid[r][colIndex]
+      if (!occ || processed.has(occ.cell)) continue
+      processed.add(occ.cell)
+      if (occ.originCol < colIndex) occ.cell.colSpan = (occ.cell.colSpan || 1) - 1
+      else occ.cell.remove()
+    }
+    table.querySelector('colgroup')?.children[colIndex]?.remove()
     syncTableWidth(table)
+    setCellSelection(null)
     setActiveTable({ el: table, rect: table.getBoundingClientRect() })
     commit('deleteTableColumn')
+  }
+
+  /** 드래그로 선택한 사각 범위를 하나로 합친다 — 왼쪽 위 셀을 기준으로 나머지 내용을
+   * 이어붙이고(빈 셀은 건너뜀), 나머지 셀은 지운 뒤 기준 셀에 colspan/rowspan을 준다. */
+  function mergeSelectedCells() {
+    const sel = cellSelection
+    if (!sel || (sel.r1 === sel.r2 && sel.c1 === sel.c2)) return
+    const table = sel.table
+    const { grid } = buildGrid(table)
+    if (!canMergeSelection(grid, sel)) return
+
+    const cells = []
+    const seen = new Set()
+    for (let r = sel.r1; r <= sel.r2; r++) {
+      for (let c = sel.c1; c <= sel.c2; c++) {
+        const cell = grid[r][c].cell
+        if (!seen.has(cell)) { seen.add(cell); cells.push(cell) }
+      }
+    }
+    const anchor = grid[sel.r1][sel.c1].cell
+    cells.forEach(cell => {
+      if (cell === anchor) return
+      const hasContent = cell.textContent.trim().length > 0 || cell.querySelector('img,[data-math]')
+      if (hasContent) {
+        anchor.appendChild(document.createElement('br'))
+        while (cell.firstChild) anchor.appendChild(cell.firstChild)
+      }
+      cell.remove()
+    })
+    anchor.colSpan = sel.c2 - sel.c1 + 1
+    anchor.rowSpan = sel.r2 - sel.r1 + 1
+    putCaretIn(anchor)
+    setCellSelection(null)
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('mergeTableCells')
+  }
+
+  /** 캐럿이 있는 병합 셀을 원래 칸 수만큼의 빈 셀로 되돌린다(내용은 전부 원래 셀에 남는다). */
+  function splitTableCell() {
+    const table = activeTable?.el
+    if (!table) return
+    const coords = getActiveCell(table)
+    const cell = coords?.cell
+    if (!cell) return
+    const colspan = cell.colSpan || 1
+    const rowspan = cell.rowSpan || 1
+    if (colspan <= 1 && rowspan <= 1) return
+
+    const { grid } = buildGrid(table)
+    for (let r = coords.rowIndex; r < coords.rowIndex + rowspan; r++) {
+      const rowEl = table.rows[r]
+      if (!rowEl) continue
+      for (let c = coords.colIndex; c < coords.colIndex + colspan; c++) {
+        if (r === coords.rowIndex && c === coords.colIndex) continue
+        const insertBefore = findInsertPositionInRow(grid, r, c)
+        const td = makeCell()
+        if (insertBefore) insertBefore.before(td)
+        else rowEl.appendChild(td)
+      }
+    }
+    cell.colSpan = 1
+    cell.rowSpan = 1
+    putCaretIn(cell)
+    setCellSelection(null)
+    setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+    commit('splitTableCell')
   }
 
   function deleteTable() {
@@ -550,6 +764,7 @@ export default function EssayEditor({
     if (!table) return
     table.remove()
     setActiveTable(null)
+    setCellSelection(null)
     editorRef.current?.focus()
     commit('deleteTable')
   }
@@ -670,8 +885,11 @@ export default function EssayEditor({
       targetIndex = 0
     }
     if (!targetRow) {
+      // 표 마지막 행 뒤에 새로 붙는 행이라 rowspan이 넘어올 여지가 없다 — 논리 열 개수만큼
+      // 새 셀을 만들면 된다(row.cells.length를 쓰면 이 행에 병합된 셀이 있을 때 열 개수가
+      // 모자란 행이 생긴다).
       const newRow = document.createElement('tr')
-      const colCount = row.cells.length
+      const { colCount } = buildGrid(table)
       for (let i = 0; i < colCount; i++) newRow.appendChild(makeCell())
       row.after(newRow)
       targetRow = newRow
@@ -724,6 +942,53 @@ export default function EssayEditor({
     const math = e.target.closest?.('[data-math]')
     if (math) { e.preventDefault(); openExistingMath(math) }
     syncActiveTable()
+  }
+
+  /**
+   * 표 셀을 여러 개 드래그로 선택한다(병합용) — 처음엔 그냥 mousedown일 뿐이라 캐럿을
+   * 놓는 기본 동작을 막지 않는다. 실제로 다른 셀로 넘어가야(=드래그로 판단) 비로소
+   * 브라우저 기본 텍스트 선택을 잠그고(userSelect:none) 우리 격자 기준 사각 선택을 그린다.
+   */
+  function handleEditorMouseDown(e) {
+    if (disabled) return
+    const cellEl = e.target.closest?.('td')
+    if (!cellEl) return
+    const table = cellEl.closest('table')
+    if (!table || !editorRef.current?.contains(table)) return
+    const { grid } = buildGrid(table)
+    const start = findCellOrigin(grid, cellEl)
+    if (!start) return
+    let dragging = false
+
+    function onMove(ev) {
+      const target = document.elementFromPoint(ev.clientX, ev.clientY)
+      const overCell = target?.closest?.('td')
+      if (!overCell || !table.contains(overCell)) return
+      const cur = findCellOrigin(grid, overCell)
+      if (!cur) return
+      if (!dragging && (cur.row !== start.row || cur.col !== start.col)) {
+        dragging = true
+        document.body.style.userSelect = 'none'
+        window.getSelection()?.removeAllRanges()
+        setActiveTable({ el: table, rect: table.getBoundingClientRect() })
+      }
+      if (!dragging) return
+      setCellSelection({
+        table,
+        r1: Math.min(start.row, cur.row),
+        c1: Math.min(start.col, cur.col),
+        r2: Math.max(start.row, cur.row),
+        c2: Math.max(start.col, cur.col)
+      })
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      if (!dragging) setCellSelection(null)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
   }
 
   function handleEditorMouseLeave() {
@@ -816,12 +1081,39 @@ export default function EssayEditor({
   const progressPct = wordLimitGuide ? Math.min(100, Math.round((charCount / wordLimitGuide) * 100)) : 0
 
   // 표 크기 조정 손잡이 위치 — 매 렌더마다 실측한다(드래그 도중에도 activeTable이 갱신되며
-  // 같이 다시 그려져야 손잡이가 표를 계속 따라다닌다).
-  const activeTableRows = activeTable ? [...activeTable.el.rows] : []
-  const colBoundaries = activeTableRows[0]
-    ? [...activeTableRows[0].cells].slice(0, -1).map(c => c.getBoundingClientRect().right)
+  // 같이 다시 그려져야 손잡이가 표를 계속 따라다닌다). 병합된 셀이 있으면 그 경계를
+  // 덮고 있는 위치엔 잡을 만한 실제 셀 테두리가 없으므로(colRightX/rowBottomY가 null을
+  // 돌려줌) 그 손잡이는 아예 그리지 않는다.
+  const activeTableGrid = activeTable ? buildGrid(activeTable.el) : null
+  const colBoundaries = activeTableGrid
+    ? Array.from({ length: activeTableGrid.colCount - 1 }, (_, i) => ({ i, x: colRightX(activeTableGrid.grid, i) }))
+        .filter(b => b.x != null)
     : []
-  const rowBoundaries = activeTableRows.map(r => r.getBoundingClientRect().bottom)
+  const rowBoundaries = activeTableGrid
+    ? Array.from({ length: activeTableGrid.rowCount }, (_, i) => ({ i, y: rowBottomY(activeTableGrid.grid, i) }))
+        .filter(b => b.y != null)
+    : []
+
+  // 셀 병합/분할 버튼 활성화 여부
+  const canMerge = !!(
+    cellSelection && activeTable && cellSelection.table === activeTable.el &&
+    (cellSelection.r1 !== cellSelection.r2 || cellSelection.c1 !== cellSelection.c2) &&
+    activeTableGrid && canMergeSelection(activeTableGrid.grid, cellSelection)
+  )
+  const activeCellNow = activeTable ? getActiveCell(activeTable.el) : null
+  const canSplit = !!(activeCellNow && ((activeCellNow.cell.colSpan || 1) > 1 || (activeCellNow.cell.rowSpan || 1) > 1))
+
+  // 드래그 선택 하이라이트 — 선택한 사각 범위의 왼쪽 위~오른쪽 아래를 하나의 반투명 박스로 그린다.
+  let selectionRect = null
+  if (cellSelection && activeTableGrid && cellSelection.table === activeTable?.el) {
+    const topLeft = activeTableGrid.grid[cellSelection.r1]?.[cellSelection.c1]?.cell
+    const bottomRight = activeTableGrid.grid[cellSelection.r2]?.[cellSelection.c2]?.cell
+    if (topLeft && bottomRight) {
+      const a = topLeft.getBoundingClientRect()
+      const b = bottomRight.getBoundingClientRect()
+      selectionRect = { top: a.top, left: a.left, width: b.right - a.left, height: b.bottom - a.top }
+    }
+  }
 
   return (
     <div className="flex-shrink-0">
@@ -896,10 +1188,11 @@ export default function EssayEditor({
           onPaste={handlePaste}
           onDrop={handleDrop}
           onDragOver={e => e.preventDefault()}
+          onMouseDown={handleEditorMouseDown}
           onKeyDown={handleKeyDown}
           onKeyUp={syncActiveTable}
           onClick={handleEditorClick}
-          onBlur={() => setActiveTable(null)}
+          onBlur={() => { setActiveTable(null); setCellSelection(null) }}
           onCompositionStart={() => { isComposingRef.current = true }}
           onCompositionEnd={handleCompositionEnd}
           className={`relative min-h-[320px] w-full rounded-2xl border px-5 py-4 text-[15px] leading-relaxed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:table-fixed [&_table]:mx-auto [&_table]:max-w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline ${
@@ -957,13 +1250,33 @@ export default function EssayEditor({
             <span className="w-px h-3 bg-gray-200" />
             <button type="button" onClick={addTableColumn} title="열 추가" className="px-1.5 py-0.5 rounded hover:bg-gray-100">+열</button>
             <button type="button" onClick={removeTableColumn} title="열 삭제" className="px-1.5 py-0.5 rounded hover:bg-gray-100">-열</button>
+            {(canMerge || canSplit) && <span className="w-px h-3 bg-gray-200" />}
+            {canMerge && <button type="button" onClick={mergeSelectedCells} title="선택한 셀 병합" className="px-1.5 py-0.5 rounded hover:bg-gray-100">병합</button>}
+            {canSplit && <button type="button" onClick={splitTableCell} title="병합 해제" className="px-1.5 py-0.5 rounded hover:bg-gray-100">분할</button>}
             <span className="w-px h-3 bg-gray-200" />
             <button type="button" onClick={deleteTable} title="표 삭제" className="px-1.5 py-0.5 rounded hover:bg-red-50 text-red-500">삭제</button>
           </div>
         )}
 
-        {/* 열 경계 드래그 손잡이 — 표 전체 높이만큼 내려오는 얇은 세로 막대. */}
-        {activeTable && !disabled && colBoundaries.map((x, i) => (
+        {/* 드래그로 여러 셀을 선택했을 때의 반투명 하이라이트(병합 대상 표시). */}
+        {selectionRect && (
+          <div
+            style={{
+              position: 'fixed',
+              top: selectionRect.top,
+              left: selectionRect.left,
+              width: selectionRect.width,
+              height: selectionRect.height,
+              zIndex: 1100,
+              pointerEvents: 'none'
+            }}
+            className="bg-blue-400/20 border-2 border-blue-400/60 rounded-sm"
+          />
+        )}
+
+        {/* 열 경계 드래그 손잡이 — 표 전체 높이만큼 내려오는 얇은 세로 막대. 병합 셀이 경계를
+            완전히 덮고 있으면(어느 행에도 그 자리에서 끝나는 셀이 없으면) 그리지 않는다. */}
+        {activeTable && !disabled && colBoundaries.map(({ i, x }) => (
           <div
             key={`col-resize-${i}`}
             onPointerDown={e => startColumnResize(e, i)}
@@ -981,7 +1294,7 @@ export default function EssayEditor({
         ))}
 
         {/* 행 경계 드래그 손잡이 — 표 전체 너비만큼 이어지는 얇은 가로 막대. */}
-        {activeTable && !disabled && rowBoundaries.map((y, i) => (
+        {activeTable && !disabled && rowBoundaries.map(({ i, y }) => (
           <div
             key={`row-resize-${i}`}
             onPointerDown={e => startRowResize(e, i)}
