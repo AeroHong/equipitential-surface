@@ -25,6 +25,29 @@ function buildCourseWorkDescription(assignmentId) {
 
 // 필터 탭에서 "명단에서 못 찾은 학생"을 고르는 값 — 실제 courseId와 절대 안 겹치게 접두사를 둠.
 const UNMATCHED_FILTER = '__unmatched__'
+// 필터 탭에서 "명단엔 있는데 제출물이 없는 학생(결석 등)"을 고르는 값.
+const ABSENT_FILTER = '__absent__'
+
+// 불러온 명단은 이 기기에만 캐시한다 — 새로고침마다 Classroom 재로그인 없이 미참여 표시를
+// 유지하려는 용도. 학생 이메일이 들어 있어 학생도 읽을 수 있는 배정 문서에는 넣지 않는다.
+function rosterCacheKey(assignmentId) {
+  return `essay-roster:${assignmentId}`
+}
+function readRosterCache(assignmentId) {
+  try {
+    const raw = localStorage.getItem(rosterCacheKey(assignmentId))
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+function writeRosterCache(assignmentId, data) {
+  try {
+    localStorage.setItem(rosterCacheKey(assignmentId), JSON.stringify(data))
+  } catch {
+    // 저장 공간이 없거나 막혀 있으면 이번 화면에서만 쓴다.
+  }
+}
 
 function formatTime(ts) {
   if (!ts) return '—'
@@ -74,9 +97,11 @@ export default function AssignmentDashboard() {
   const [syncingFor, setSyncingFor] = useState(null) // 지금 설명을 다시 동기화 중인 courseId
   // 제출자 이메일 ↔ 소속 수업 매칭 — "명단 불러오기"를 눌러야 채워진다(Classroom 로그인
   // 필요). 안 눌러도 나머지 기능엔 지장 없고, 그냥 반별 필터/구분 표시가 안 될 뿐이다.
-  const [roster, setRoster] = useState(null) // null: 아직 안 불러옴, {}: 불러왔지만 빈 수업들
+  // {email: {courseId, name}} — null: 아직 안 불러옴, {}: 불러왔지만 빈 수업들
+  const [roster, setRoster] = useState(() => readRosterCache(assignmentId)?.roster || null)
+  const [rosterLoadedAt, setRosterLoadedAt] = useState(() => readRosterCache(assignmentId)?.loadedAt || null)
   const [loadingRoster, setLoadingRoster] = useState(false)
-  const [groupFilter, setGroupFilter] = useState('all') // 'all' | courseId | UNMATCHED_FILTER
+  const [groupFilter, setGroupFilter] = useState('all') // 'all' | courseId | UNMATCHED_FILTER | ABSENT_FILTER
   const [highlightSubId, setHighlightSubId] = useState(null) // 이탈 알림에서 고른 학생 행 강조
 
   useEffect(() => {
@@ -420,9 +445,10 @@ export default function AssignmentDashboard() {
     }
   }
 
-  // 이 배정에 걸린 모든 수업의 로스터(이메일)를 불러와 제출자와 매칭한다 — 제출물의
-  // studentEmail과 로스터 이메일을 비교해 "이 학생은 어느 반인지"를 알아낸다. 로스터를
-  // 못 불러온(또는 못 찾은) 학생은 "매칭 안 됨"으로 남는다.
+  // 이 배정에 걸린 모든 수업의 로스터(이메일·이름)를 불러와 제출자와 매칭한다 — 제출물의
+  // studentEmail과 로스터 이메일을 비교해 "이 학생은 어느 반인지"를 알아내고, 명단에 있는데
+  // 제출물이 없는 학생은 "미참여"로 표에 따로 보여준다. 로스터를 못 불러온(또는 못 찾은)
+  // 제출자는 "매칭 안 됨"으로 남는다.
   async function handleLoadRoster() {
     const classrooms = getAssignmentClassrooms(assignment)
     if (classrooms.length === 0) return
@@ -434,10 +460,13 @@ export default function AssignmentDashboard() {
       for (const c of classrooms) {
         const students = await listCourseStudents(c.courseId)
         for (const s of students) {
-          if (s.email) map[s.email] = c.courseId
+          if (s.email) map[s.email] = { courseId: c.courseId, name: s.name }
         }
       }
+      const loadedAt = Date.now()
       setRoster(map)
+      setRosterLoadedAt(loadedAt)
+      writeRosterCache(assignmentId, { roster: map, loadedAt })
     } catch (err) {
       console.error('명단 조회 실패:', err)
       setClassroomError(getClassroomErrorMessage(err, '명단 조회'))
@@ -457,12 +486,29 @@ export default function AssignmentDashboard() {
   function courseIdForSubmission(sub) {
     if (!roster) return null
     const email = (sub.studentEmail || '').toLowerCase()
-    return email && roster[email] ? roster[email] : UNMATCHED_FILTER
+    return email && roster[email] ? roster[email].courseId : UNMATCHED_FILTER
   }
+
+  // 명단에는 있는데 이 배정의 제출물이 없는 학생 — 결석 등으로 평가에 안 들어온 학생.
+  // 대기실 배정은 평가 시작 전엔 아무도 제출물이 없으므로 시작 후에만 센다.
+  const submittedEmails = new Set(submissions.map(s => (s.studentEmail || '').toLowerCase()).filter(Boolean))
+  const absenceMeaningful = !assignment?.waitingRoomEnabled || !!assignment?.examStartedAt
+  const absentStudents = roster && absenceMeaningful
+    ? Object.entries(roster)
+      .filter(([email]) => !submittedEmails.has(email))
+      .map(([email, info]) => ({ email, ...info }))
+      .sort((a, b) => a.courseId.localeCompare(b.courseId) || (a.name || '').localeCompare(b.name || '', 'ko'))
+    : []
 
   const filteredSubmissions = groupFilter === 'all'
     ? submissions
-    : submissions.filter(sub => courseIdForSubmission(sub) === groupFilter)
+    : groupFilter === ABSENT_FILTER
+      ? []
+      : submissions.filter(sub => courseIdForSubmission(sub) === groupFilter)
+  const filteredAbsent = groupFilter === 'all' || groupFilter === ABSENT_FILTER
+    ? absentStudents
+    : absentStudents.filter(a => a.courseId === groupFilter)
+  const courseNameOf = (courseId) => classrooms.find(c => c.courseId === courseId)?.courseName || ''
   // 반 필터를 골랐으면 상단 "제출 X/Y" 통계도 그 반 기준으로 보여준다.
   // 대기실 단계엔 아직 제출물 문서가 없으므로(평가 시작 후에 만든다) 접속 인원은 presence로 센다.
   const waitingCount = Object.values(presenceMap).filter(p => p?.state && p.state !== 'offline').length
@@ -581,6 +627,9 @@ export default function AssignmentDashboard() {
             )
           )}
           <span className="text-xs text-gray-500">제출 {submittedCount} / {filteredSubmissions.length}</span>
+          {roster && absenceMeaningful && (
+            <span className={`text-xs ${filteredAbsent.length > 0 ? 'font-medium text-orange-600' : 'text-gray-400'}`}>미참여 {filteredAbsent.length}명</span>
+          )}
           {isGradable && submissions.length > 0 && (
             <>
               <button
@@ -722,16 +771,25 @@ export default function AssignmentDashboard() {
                 </div>
               )}
 
-              {/* 여러 반에 걸쳐 있을 때만 의미가 있다 — 명단(이메일)을 불러와 제출자와
-                  매칭해서 아래 표에 "소속 수업" 필터/컬럼을 쓸 수 있게 한다. */}
-              {classrooms.length > 1 && (
-                <button
-                  onClick={handleLoadRoster}
-                  disabled={loadingRoster}
-                  className="mb-3 w-full rounded-xl border border-indigo-200 py-2 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-40"
-                >
-                  {loadingRoster ? '명단 확인 중...' : roster ? '명단 다시 불러오기 (반별로 나눠보기)' : '명단 불러오기 (반별로 나눠보기)'}
-                </button>
+              {/* 명단(이메일·이름)을 불러와 제출자와 매칭한다 — 미참여 학생 표시, 여러 반이면
+                  "소속 수업" 필터/컬럼까지 쓸 수 있게 된다. */}
+              {classrooms.length > 0 && hasClassroomConfig() && (
+                <div className="mb-3">
+                  <button
+                    onClick={handleLoadRoster}
+                    disabled={loadingRoster}
+                    className="w-full rounded-xl border border-indigo-200 py-2 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-40"
+                  >
+                    {loadingRoster
+                      ? '명단 확인 중...'
+                      : `${roster ? '명단 다시 불러오기' : '명단 불러오기'} (미참여 학생${hasMultipleClassrooms ? '·반별 구분' : ''})`}
+                  </button>
+                  {rosterLoadedAt && (
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      명단 {Object.keys(roster || {}).length}명 · {formatTime(rosterLoadedAt)} 불러옴 (이 기기에 저장됨)
+                    </p>
+                  )}
+                </div>
               )}
 
               {!hasClassroomConfig() ? (
@@ -799,15 +857,18 @@ export default function AssignmentDashboard() {
           </section>
         )}
 
-        {hasMultipleClassrooms && (
+        {(hasMultipleClassrooms || (roster && absenceMeaningful)) && (
           <div className="mb-4 flex flex-wrap gap-1.5">
             {[
-              { value: 'all', label: `전체 (${submissions.length})` },
-              ...classrooms.map(c => ({
-                value: c.courseId,
-                label: `${c.courseName || c.courseId} (${roster ? submissions.filter(s => courseIdForSubmission(s) === c.courseId).length : '?'})`
-              })),
-              { value: UNMATCHED_FILTER, label: `매칭 안 됨 (${roster ? submissions.filter(s => courseIdForSubmission(s) === UNMATCHED_FILTER).length : '?'})` }
+              { value: 'all', label: `전체 (${submissions.length + absentStudents.length})` },
+              ...(hasMultipleClassrooms ? [
+                ...classrooms.map(c => ({
+                  value: c.courseId,
+                  label: `${c.courseName || c.courseId} (${roster ? submissions.filter(s => courseIdForSubmission(s) === c.courseId).length + absentStudents.filter(a => a.courseId === c.courseId).length : '?'})`
+                })),
+                { value: UNMATCHED_FILTER, label: `매칭 안 됨 (${roster ? submissions.filter(s => courseIdForSubmission(s) === UNMATCHED_FILTER).length : '?'})` }
+              ] : []),
+              ...(roster && absenceMeaningful ? [{ value: ABSENT_FILTER, label: `미참여 (${absentStudents.length})` }] : [])
             ].map(opt => (
               <button
                 key={opt.value}
@@ -825,11 +886,11 @@ export default function AssignmentDashboard() {
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : submissions.length === 0 ? (
+        ) : submissions.length === 0 && absentStudents.length === 0 ? (
           <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200">
             아직 시작한 학생이 없습니다.
           </div>
-        ) : filteredSubmissions.length === 0 ? (
+        ) : filteredSubmissions.length === 0 && filteredAbsent.length === 0 ? (
           <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200">
             이 조건에 해당하는 학생이 없습니다.
           </div>
@@ -859,8 +920,9 @@ export default function AssignmentDashboard() {
                   const completion = usesSections ? sectionCompletion(sub) : null
                   const subCourseId = hasMultipleClassrooms ? courseIdForSubmission(sub) : null
                   const subCourseName = subCourseId && subCourseId !== UNMATCHED_FILTER
-                    ? classrooms.find(c => c.courseId === subCourseId)?.courseName
+                    ? courseNameOf(subCourseId)
                     : null
+                  const rosterEntry = roster?.[(sub.studentEmail || '').toLowerCase()]
                   return (
                     <tr
                       key={sub.id}
@@ -870,12 +932,14 @@ export default function AssignmentDashboard() {
                     >
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-800">
-                          {sub.studentName || '(이름 없음)'}
+                          {sub.studentName || rosterEntry?.name || '(이름 없음)'}
                           {memos[sub.id] && (
                             <span className="ml-1 cursor-help" title={memos[sub.id]}>📝</span>
                           )}
                         </p>
-                        <p className="text-xs text-gray-400">{sub.studentClass ? `${sub.studentClass}반` : ''}</p>
+                        <p className="text-xs text-gray-400">
+                          {sub.studentClass ? `${sub.studentClass}반` : (!hasMultipleClassrooms && rosterEntry ? courseNameOf(rosterEntry.courseId) : '')}
+                        </p>
                       </td>
                       {hasMultipleClassrooms && (
                         <td className="px-4 py-3 text-xs text-gray-500">
@@ -962,6 +1026,19 @@ export default function AssignmentDashboard() {
                     </tr>
                   )
                 })}
+                {filteredAbsent.map(a => (
+                  <tr key={`absent-${a.email}`} className="border-b border-gray-50 last:border-0 bg-orange-50/40">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-500">{a.name || a.email}</p>
+                      <p className="text-xs text-gray-400">{hasMultipleClassrooms ? a.email : courseNameOf(a.courseId)}</p>
+                    </td>
+                    {hasMultipleClassrooms && <td className="px-4 py-3 text-xs text-gray-500">{courseNameOf(a.courseId)}</td>}
+                    <td className="px-4 py-3">
+                      <span className="text-xs rounded-full px-2 py-0.5 font-medium bg-orange-100 text-orange-700">미참여</span>
+                    </td>
+                    <td colSpan={99} className="px-4 py-3 text-xs text-gray-300">—</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
