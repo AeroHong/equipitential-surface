@@ -8,8 +8,18 @@ export function isFocusGuardActive(assignment) {
   return Boolean(assignment?.timeLimitMinutes > 0) && assignment?.focusGuardEnabled !== false
 }
 
+/** 아이패드·아이폰 — 요즘 아이패드 Safari는 맥처럼 보이므로 터치 지점 수로 가려낸다. */
+export function isAppleTouchDevice() {
+  if (typeof navigator === 'undefined') return false
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
 export function fullscreenSupported() {
   if (typeof document === 'undefined') return false
+  // 아이패드 Safari는 전체화면 중 키보드 입력·확대/축소를 하면 전체화면을 스스로 풀어버려서
+  // 작성 자체가 방해된다(실사용 신고) — 아예 전체화면을 쓰지 않는다.
+  if (isAppleTouchDevice()) return false
   return Boolean(document.fullscreenEnabled || document.webkitFullscreenEnabled)
 }
 

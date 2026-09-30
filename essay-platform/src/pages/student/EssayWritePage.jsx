@@ -473,11 +473,31 @@ export default function EssayWritePage() {
         <FocusGuardOverlay
           mode="warning"
           warning={focusGuard.warning}
-          fullscreenLost={focusGuard.fullscreenLost}
           usingFullscreen={focusGuard.usingFullscreen}
           totalLeaveCount={Math.max(submission?.leaveCount || 0, focusGuard.leaveCount)}
           onAcknowledge={focusGuard.acknowledge}
         />
+      )}
+      {/* 전체화면이 풀린 건 이탈로 세지 않는다 — 돌아가기를 권하는 안내만 띄운다. */}
+      {focusGuardOn && examEntered && !focusGuard.blocking && focusGuard.fullscreenLost && (
+        <div className="fixed bottom-4 left-1/2 z-[1900] flex -translate-x-1/2 items-center gap-2 rounded-full border border-gray-200 bg-white py-1.5 pl-4 pr-1.5 text-xs text-gray-600 shadow-lg">
+          전체화면이 해제되었습니다
+          <button
+            type="button"
+            onClick={focusGuard.returnToFullscreen}
+            className="rounded-full bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-700"
+          >
+            전체화면으로
+          </button>
+          <button
+            type="button"
+            onClick={focusGuard.dismissFullscreenPrompt}
+            aria-label="안내 닫기"
+            className="rounded-full px-2 py-1.5 text-gray-400 hover:bg-gray-100"
+          >
+            ✕
+          </button>
+        </div>
       )}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm sticky top-0 z-10">
         <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-gray-600 transition-colors">

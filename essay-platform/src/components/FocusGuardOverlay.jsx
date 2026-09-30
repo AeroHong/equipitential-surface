@@ -4,9 +4,10 @@ import { fullscreenSupported, formatDuration, LEAVE_TYPE_LABELS } from '../utils
 /**
  * 화면 이탈 감지(hooks/useFocusGuard.js)용 전체 화면 가림막 두 가지.
  *   mode="start": 제한시간 평가를 시작하기 전 안내 + 전체화면 진입 버튼
- *   mode="warning": 이탈했다가 돌아왔을 때(또는 전체화면이 풀렸을 때) 경고 — 버튼을 눌러야 계속 작성
+ *   mode="warning": 다른 탭·앱으로 이탈했다가 돌아왔을 때 경고 — 버튼을 눌러야 계속 작성
+ * (전체화면이 풀린 것만으로는 뜨지 않는다 — EssayWritePage의 하단 안내 참고)
  */
-export default function FocusGuardOverlay({ mode, warning, fullscreenLost, usingFullscreen, totalLeaveCount, onStart, onAcknowledge }) {
+export default function FocusGuardOverlay({ mode, warning, usingFullscreen, totalLeaveCount, onStart, onAcknowledge }) {
   const [busy, setBusy] = useState(false)
   const canFullscreen = fullscreenSupported()
 
@@ -24,7 +25,7 @@ export default function FocusGuardOverlay({ mode, warning, fullscreenLost, using
             <p className="text-lg font-bold text-gray-900 mb-2">평가를 시작합니다</p>
             <ul className="text-left text-sm text-gray-600 space-y-1.5 mb-5 bg-gray-50 rounded-xl p-4">
               <li>• 평가 중에는 {canFullscreen ? '전체화면으로 작성합니다.' : '이 화면에서만 작성합니다.'}</li>
-              <li>• <b className="text-red-600">다른 탭·앱으로 이동하거나 {canFullscreen ? '전체화면을 빠져나가면' : '화면을 벗어나면'}</b> 횟수와 시간이 선생님께 바로 전달됩니다.</li>
+              <li>• <b className="text-red-600">다른 탭·앱으로 이동하면</b> 횟수와 시간이 선생님께 바로 전달됩니다.</li>
               <li>• 답안에 이미지를 첨부할 때 열리는 사진 선택 창은 괜찮습니다.</li>
             </ul>
             <button
@@ -39,13 +40,9 @@ export default function FocusGuardOverlay({ mode, warning, fullscreenLost, using
         ) : (
           <>
             <p className="text-4xl mb-2">⚠️</p>
-            <p className="text-lg font-bold text-red-600 mb-2">
-              {warning ? '화면 이탈이 감지되었습니다' : '전체화면이 해제되었습니다'}
-            </p>
+            <p className="text-lg font-bold text-red-600 mb-2">화면 이탈이 감지되었습니다</p>
             <p className="text-sm text-gray-600 mb-1">
-              {warning
-                ? <>{LEAVE_TYPE_LABELS[warning.type] || '화면 이탈'} · {formatDuration(warning.durationMs)} 동안 벗어나 있었습니다.</>
-                : '평가 중에는 전체화면을 유지해야 합니다.'}
+              {LEAVE_TYPE_LABELS[warning?.type] || '화면 이탈'} · {formatDuration(warning?.durationMs)} 동안 벗어나 있었습니다.
             </p>
             <p className="text-sm text-gray-600 mb-5">
               이 기록은 선생님께 전달되었습니다{totalLeaveCount > 0 ? ` (지금까지 ${totalLeaveCount}회)` : ''}.
