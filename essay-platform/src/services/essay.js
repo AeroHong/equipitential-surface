@@ -222,17 +222,27 @@ export function subscribeAssignment(assignmentId, callback, onError) {
  * @param {string} assignmentId
  */
 export async function startExam(assignmentId) {
-  await updateAssignment(assignmentId, { examStartedAt: serverTimestamp() })
+  await updateAssignment(assignmentId, { examStartedAt: serverTimestamp(), examPausedAt: null, pausedTotalMs: 0 })
 }
 
 /**
- * 실수로 시작했을 때 대기실로 되돌린다. 이미 문항을 받아간 학생 화면은 되돌려지지 않고,
- * 새로 접속하는 학생만 다시 대기실을 보게 된다.
+ * 진행 중인 평가를 일시정지한다("대기실로 보내기") — 작성 중인 학생 화면은 문항이 가려지고
+ * 대기실 화면으로 바뀌며, 남은 시간이 멈춘다(utils/examTimer.js의 getPausedAtMs).
  * @param {string} assignmentId
  */
-export async function resetExamStart(assignmentId) {
-  await updateAssignment(assignmentId, { examStartedAt: null })
+export async function pauseExam(assignmentId) {
+  await updateAssignment(assignmentId, { examPausedAt: serverTimestamp() })
 }
+
+/**
+ * 일시정지를 풀고 멈춰 있던 시간만큼 제한시간을 뒤로 민다.
+ * @param {string} assignmentId
+ * @param {number} pausedMs 멈춰 있던 시간(ms, 서버 시계 기준으로 계산해서 넘긴다)
+ */
+export async function resumeExam(assignmentId, pausedMs) {
+  await updateAssignment(assignmentId, { examPausedAt: null, pausedTotalMs: increment(Math.max(0, Math.round(pausedMs))) })
+}
+
 
 /**
  * 배정 목록 조회 (최신순)

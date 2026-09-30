@@ -21,7 +21,7 @@ import CalculatorPanel from '../../components/CalculatorPanel.jsx'
 import PracticePanel from './PracticePanel.jsx'
 import ExamTimer from '../../components/ExamTimer.jsx'
 import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
-import { getExamDeadlineMs } from '../../utils/examTimer.js'
+import { getExamDeadlineMs, getPausedAtMs } from '../../utils/examTimer.js'
 import { useFocusGuard } from '../../hooks/useFocusGuard.js'
 import { isFocusGuardActive, detectDisplayMode } from '../../utils/focusGuard.js'
 import FocusGuardOverlay from '../../components/FocusGuardOverlay.jsx'
@@ -137,10 +137,15 @@ export default function EssayWritePage() {
   const needsIdentity = isForeignAccount && !isStaffAccount && !userInfo?.manualIdentity
 
   // 대기실: 교사가 평가를 시작하기 전엔 지문·양식을 아예 불러오지 않고 제출물도 만들지 않는다
-  // (startedAt이 실제 시작 시각을 가리키도록). 한 번 문항을 받은 뒤(submission 있음)엔 교사가
-  // "대기실로 되돌리기"를 눌러도 이미 작성 중인 화면을 빼앗지 않는다.
+  // (startedAt이 실제 시작 시각을 가리키도록).
   const waiting = Boolean(assignment?.waitingRoomEnabled && !assignment?.examStartedAt && !submission)
-  const readyToLoadContent = Boolean(assignment) && !needsIdentity && !waiting
+  // 일시정지: 교사가 진행 중인 평가를 "대기실로 보내기"하면 작성 중인 학생도 문항·답안이 가려지고
+  // 대기실 화면을 본다. 남은 시간은 멈추고(ExamTimer pausedAtMs), 재개하면 쓰던 답안으로 돌아온다.
+  // 일시정지 중에 새로 들어온 학생은 제출물을 만들지 않고 대기실에 머문다.
+  const pausedAtMs = getPausedAtMs(assignment)
+  const paused = pausedAtMs != null
+  const showWaitingRoom = waiting || paused
+  const readyToLoadContent = Boolean(assignment) && !needsIdentity && !waiting && !(paused && !submission)
   const contentLoadStartedRef = useRef(false)
   const serverOffsetMs = useServerTimeOffset()
   const serverOffsetRef = useRef(0)
@@ -274,8 +279,12 @@ export default function EssayWritePage() {
   // 풀리므로 examEntered는 저장하지 않고 매번 시작 안내(전체화면 진입 버튼)부터 다시 거친다.
   // 교사가 "재열기"한 학생(timeLimitWaived)도 계속 감지한다 — 제한시간만 풀어주는 것이지 평가가
   // 끝난 게 아니다(예전엔 여기서 제외해서 재열기 뒤로 이탈이 더 안 잡혔다).
-  const focusGuardOn = isFocusGuardActive(assignment) && Boolean(submission) && !locked
+  const focusGuardOn = isFocusGuardActive(assignment) && Boolean(submission) && !locked && !paused
   const [examEntered, setExamEntered] = useState(false)
+  // 일시정지되면 전체화면이 풀리므로(useFocusGuard가 정리), 재개할 때 시작 안내부터 다시 거친다.
+  useEffect(() => {
+    if (paused) setExamEntered(false)
+  }, [paused])
   const focusGuard = useFocusGuard({ enabled: focusGuardOn && examEntered, submissionId: submission?.id, serverOffsetMs })
 
   async function handleExamEnter() {
@@ -283,6 +292,11 @@ export default function EssayWritePage() {
     setExamEntered(true)
     if (submission?.id) recordDisplayMode(submission.id, detectDisplayMode()).catch(() => {})
   }
+
+  // 일시정지 직전까지 쓴 내용은 바로 저장해둔다(편집기가 가려지므로).
+  useEffect(() => {
+    if (paused) flushNow()
+  }, [paused, flushNow])
 
   function handleLogInput(entry) {
     logInput(entry)
@@ -461,10 +475,13 @@ export default function EssayWritePage() {
           {waiting && (
             <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-3 py-1 font-medium">⏳ 평가 시작 대기 중</span>
           )}
-          {deadlineMs != null && submission?.status !== 'submitted' && assignment.status !== 'closed' && (
-            <ExamTimer deadlineMs={deadlineMs} serverOffsetMs={serverOffsetMs} onExpire={handleTimeExpired} />
+          {paused && !waiting && (
+            <span className="text-xs bg-slate-200 text-slate-700 rounded-full px-3 py-1 font-medium">⏸ 일시정지</span>
           )}
-          {!locked && !waiting && <SaveStateLabel state={saveState} />}
+          {deadlineMs != null && submission?.status !== 'submitted' && assignment.status !== 'closed' && (
+            <ExamTimer deadlineMs={deadlineMs} serverOffsetMs={serverOffsetMs} onExpire={handleTimeExpired} pausedAtMs={pausedAtMs} />
+          )}
+          {!locked && !showWaitingRoom && <SaveStateLabel state={saveState} />}
           {timeUp && submission?.status !== 'submitted' && (
             <span className="text-xs bg-red-100 text-red-700 rounded-full px-3 py-1 font-medium">시간 종료 · 제출 중...</span>
           )}
@@ -487,7 +504,7 @@ export default function EssayWritePage() {
       {/* 안내 배너 */}
       <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2 text-center">
         <p className="text-xs text-indigo-700">
-          {waiting ? '선생님이 평가를 시작하면 문항이 나타납니다. ' : ''}
+          {waiting ? '선생님이 평가를 시작하면 문항이 나타납니다. ' : paused ? '선생님이 평가를 잠시 멈췄습니다. 재개하면 작성하던 답안으로 돌아갑니다. ' : ''}
           본인이 직접 작성해야 하며, 작성 과정이 함께 기록됩니다.{' '}
           {usesSections ? '각 항목의 안내에 따라 빠짐없이 작성해주세요.' : `목표 분량은 ${wordLimit}자 내외입니다.`}
           {assignment.timeLimitMinutes > 0 && (
@@ -507,8 +524,8 @@ export default function EssayWritePage() {
           <div className={calculatorEnabled ? 'min-w-0 flex-1' : ''}>
             {/* 대기실/로딩/본 화면을 이 칸 안에서만 바꾼다 — 오른쪽 계산기 칼럼은 그대로 마운트된 채
                 남아서, 평가가 시작돼도 연습하며 계산해둔 내용이 사라지지 않는다. */}
-            {waiting ? (
-              <PracticePanel calculatorEnabled={calculatorEnabled} />
+            {showWaitingRoom ? (
+              <PracticePanel calculatorEnabled={calculatorEnabled} paused={paused && !waiting} />
             ) : !submission ? (
               <div className="flex items-center justify-center py-24">
                 <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />

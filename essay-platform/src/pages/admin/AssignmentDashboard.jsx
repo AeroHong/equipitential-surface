@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ref, onValue } from 'firebase/database'
 import { useAuth } from '../../App.jsx'
-import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, resetExamStart, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
+import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, pauseExam, resumeExam, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
 import PresenceBadge from '../../components/PresenceBadge.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
-import { getExamDeadlineMs } from '../../utils/examTimer.js'
+import { getExamDeadlineMs, getPausedAtMs } from '../../utils/examTimer.js'
 import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
 import ExamTimer from '../../components/ExamTimer.jsx'
 import LeaveAlerts from '../../components/LeaveAlerts.jsx'
@@ -209,10 +209,19 @@ export default function AssignmentDashboard() {
     }
   }
 
-  async function handleResetExamStart() {
-    if (!window.confirm('대기실로 되돌릴까요? 이미 문항을 받은 학생 화면은 그대로이고, 새로 접속하는 학생만 다시 대기실을 보게 됩니다.')) return
-    await resetExamStart(assignmentId)
-    setAssignment(a => ({ ...a, examStartedAt: null }))
+  // 일시정지("대기실로 보내기") — 작성 중인 학생도 문항이 가려지고 대기실 화면으로 바뀌며
+  // 남은 시간이 멈춘다. 재개하면 멈춘 시간만큼 제한시간이 뒤로 밀린다.
+  async function handlePauseExam() {
+    if (!window.confirm('평가를 일시정지하고 모든 학생을 대기실로 보낼까요? 작성 중인 답안은 저장된 채로 가려지고, 남은 시간이 멈춥니다. "평가 재개"를 누르면 이어서 작성합니다.')) return
+    await pauseExam(assignmentId)
+    setAssignment(a => ({ ...a, examPausedAt: new Date(Date.now() + serverOffsetMs) }))
+  }
+
+  async function handleResumeExam() {
+    const pausedAt = getPausedAtMs(assignment)
+    const pausedMs = pausedAt != null ? Date.now() + serverOffsetMs - pausedAt : 0
+    await resumeExam(assignmentId, pausedMs)
+    setAssignment(a => ({ ...a, examPausedAt: null, pausedTotalMs: (Number(a.pausedTotalMs) || 0) + Math.max(0, Math.round(pausedMs)) }))
   }
 
   async function handleCopyStudentLink() {
@@ -531,16 +540,32 @@ export default function AssignmentDashboard() {
           {assignment?.waitingRoomEnabled && (
             assignment.examStartedAt ? (
               <>
-                <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">
-                  평가 진행 중 · {formatClock(assignment.examStartedAt)} 시작
-                </span>
+                {assignment.examPausedAt ? (
+                  <span className="text-xs bg-slate-200 text-slate-700 rounded-full px-3 py-1 font-medium">⏸ 일시정지 중 (학생은 대기실)</span>
+                ) : (
+                  <span className="text-xs bg-green-100 text-green-700 rounded-full px-3 py-1 font-medium">
+                    평가 진행 중 · {formatClock(assignment.examStartedAt)} 시작
+                  </span>
+                )}
                 {/* 대기실 배정은 모든 학생이 같은 시각(examStartedAt)에 끝나므로 남은 시간을 하나로 보여준다. */}
                 {getExamDeadlineMs(assignment, null) != null && (
-                  <ExamTimer deadlineMs={getExamDeadlineMs(assignment, null)} serverOffsetMs={serverOffsetMs} />
+                  <ExamTimer deadlineMs={getExamDeadlineMs(assignment, null)} serverOffsetMs={serverOffsetMs} pausedAtMs={getPausedAtMs(assignment)} />
                 )}
-                <button onClick={handleResetExamStart} className="text-xs text-gray-400 underline hover:text-gray-600">
-                  대기실로 되돌리기
-                </button>
+                {assignment.examPausedAt ? (
+                  <button
+                    onClick={handleResumeExam}
+                    className="rounded-lg bg-green-600 px-4 py-1.5 text-xs font-bold text-white transition-colors hover:bg-green-700"
+                  >
+                    ▶ 평가 재개
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePauseExam}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                  >
+                    ⏸ 일시정지(대기실로)
+                  </button>
+                )}
               </>
             ) : (
               <>
