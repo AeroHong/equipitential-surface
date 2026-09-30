@@ -6,6 +6,8 @@ import {
 } from '../utils/focusGuard.js'
 
 const BLUR_GRACE_MS = 1500
+// 돌아온 직후 이 시간 안에 오는 전체화면 해제는 방금 끝난 이탈의 여파로 본다(아래 handleFullscreenChange).
+const RETURN_GRACE_MS = 3000
 
 /**
  * 제한시간 평가 중 "입력 화면을 벗어났는지"를 감지해 기록하는 훅(pages/student/EssayWritePage.jsx).
@@ -32,6 +34,8 @@ export function useFocusGuard({ enabled, submissionId, serverOffsetMs }) {
   const fsActiveRef = useRef(false)
   const blurTimerRef = useRef(null)
   const countRef = useRef(0)
+  const lastReturnAtRef = useRef(0)
+  const warningPendingRef = useRef(false)
   const offsetRef = useRef(serverOffsetMs)
   offsetRef.current = serverOffsetMs
   const subIdRef = useRef(submissionId)
@@ -61,13 +65,17 @@ export function useFocusGuard({ enabled, submissionId, serverOffsetMs }) {
     const leaving = leavingRef.current
     if (!leaving) return
     leavingRef.current = null
+    lastReturnAtRef.current = Date.now()
     const returnedAt = now()
     const durationMs = Math.max(0, returnedAt - leaving.leftAt)
     if (subIdRef.current) {
       recordLeaveEnd(subIdRef.current, { type: leaving.type, leftAt: leaving.leftAt, returnedAt, durationMs })
         .catch(err => console.error('이탈 기록 실패:', err))
     }
-    if (showWarning) setWarning({ count: countRef.current, durationMs, type: leaving.type })
+    if (showWarning) {
+      warningPendingRef.current = true
+      setWarning({ count: countRef.current, durationMs, type: leaving.type })
+    }
   }, [])
 
   useEffect(() => {
@@ -115,6 +123,13 @@ export function useFocusGuard({ enabled, submissionId, serverOffsetMs }) {
       if (!fsActiveRef.current) return
       // 탭 전환으로 인한 해제는 hidden 쪽에서 처리한다.
       if (document.visibilityState === 'hidden') return
+      // 브라우저는 탭/앱이 숨겨진 동안 전체화면 해제 이벤트를 미뤄뒀다가 "돌아와서 화면이 보일 때"
+      // 보낸다 — 이미 센 이탈(나갈 때 1회)을 돌아올 때 또 세지 않도록, 이탈 중이거나 경고창이
+      // 떠 있거나 막 돌아온 직후라면 새 이탈로 세지 않고 전체화면 복귀만 요구한다(실사용 신고).
+      if (leavingRef.current || warningPendingRef.current || Date.now() - lastReturnAtRef.current < RETURN_GRACE_MS) {
+        setFullscreenLost(true)
+        return
+      }
       startLeave('fullscreen_exit')
     }
 
@@ -137,6 +152,7 @@ export function useFocusGuard({ enabled, submissionId, serverOffsetMs }) {
   useEffect(() => {
     if (enabled) return
     leavingRef.current = null
+    warningPendingRef.current = false
     setWarning(null)
     setFullscreenLost(false)
     setUsingFullscreen(false)
@@ -158,6 +174,7 @@ export function useFocusGuard({ enabled, submissionId, serverOffsetMs }) {
   }, [])
 
   const acknowledge = useCallback(async () => {
+    warningPendingRef.current = false
     setWarning(null)
     if (fsActiveRef.current && !currentFullscreenElement()) {
       const ok = await requestAppFullscreen()
