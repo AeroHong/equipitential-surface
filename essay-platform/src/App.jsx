@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom'
 import { onAuthStateChanged } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db } from './firebase.js'
@@ -18,6 +18,7 @@ import TemplateList from './pages/admin/templates/TemplateList.jsx'
 import TemplateEditor from './pages/admin/templates/TemplateEditor.jsx'
 import QuestionSetEditor from './pages/admin/templates/QuestionSetEditor.jsx'
 import HelpPage from './pages/admin/HelpPage.jsx'
+import TeacherRequestCard from './components/TeacherRequestCard.jsx'
 
 // ─── Auth Context (physlab의 App.jsx와 동일한 패턴 — 같은 Firebase 프로젝트를 쓰므로 users/{uid}.role도 그대로 통한다) ──
 export const AuthContext = createContext(null)
@@ -161,29 +162,23 @@ function StudentHome() {
     }
   }
 
+  // 선생님이 처음 로그인하면 가장 먼저 해야 할 일이 교사 권한 요청이라 크게 보여주고,
+  // 학생용 안내("과제 링크로 접속")는 그 아래에 작게 둔다.
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
-      <div className="text-center max-w-sm">
-        <p className="text-4xl mb-3">✍️</p>
-        <p className="text-gray-700 font-medium mb-1">아직 배정된 과제 링크가 없습니다</p>
-        <p className="text-gray-400 text-sm mb-6">선생님이 공유한 과제 링크로 접속해주세요.</p>
-
-        {requested ? (
-          <p className="text-sm text-indigo-600 bg-indigo-50 rounded-xl px-4 py-3">
-            교사 권한을 요청했습니다. 관리자 승인을 기다려주세요.
-          </p>
-        ) : (
-          <>
-            <button
-              onClick={handleRequest}
-              disabled={requesting}
-              className="text-sm text-indigo-600 hover:text-indigo-800 underline underline-offset-2 disabled:opacity-50"
-            >
-              {requesting ? '요청 중...' : '선생님이신가요? 교사 권한 요청하기'}
-            </button>
-            {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
-          </>
-        )}
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-4 py-10">
+      <div className="w-full max-w-md space-y-4">
+        <TeacherRequestCard
+          state={requested ? 'requested' : requesting ? 'requesting' : 'idle'}
+          error={error}
+          onRequest={handleRequest}
+        />
+        <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 text-center">
+          <p className="text-sm font-medium text-gray-700">✍️ 학생인가요?</p>
+          <p className="mt-0.5 text-xs text-gray-400">선생님이 공유한 과제 링크로 접속하면 바로 작성 화면이 열립니다.</p>
+        </div>
+        <p className="text-center">
+          <Link to="/help" className="text-sm text-indigo-600 underline underline-offset-2 hover:text-indigo-800">📖 사용법 보기</Link>
+        </p>
       </div>
     </div>
   )
@@ -200,6 +195,7 @@ function PendingApproval() {
         <p className="text-gray-400 text-sm">
           {userInfo?.name || user?.displayName || user?.email}님의 요청을 관리자가 확인하면 이용하실 수 있어요.
         </p>
+        <Link to="/help" className="mt-4 inline-block text-sm text-indigo-600 underline underline-offset-2 hover:text-indigo-800">📖 기다리는 동안 사용법 보기</Link>
       </div>
     </div>
   )
@@ -229,7 +225,8 @@ export default function App() {
           <Route path="/write/:assignmentId" element={<RequireAuth><EssayWritePage /></RequireAuth>} />
 
           <Route path="/admin" element={<RequireAdmin><AdminHome /></RequireAdmin>} />
-          <Route path="/help" element={<RequireAdmin><HelpPage /></RequireAdmin>} />
+          {/* 사용법은 로그인·교사 승인 없이도 볼 수 있다 — 승인 전인 선생님이 미리 읽어볼 수 있게. */}
+          <Route path="/help" element={<HelpPage />} />
           <Route path="/admin/passages" element={<RequireTeacherOnly><PassageList /></RequireTeacherOnly>} />
           <Route path="/admin/passages/new" element={<RequireTeacherOnly><PassageEditor /></RequireTeacherOnly>} />
           <Route path="/admin/passages/:passageId/edit" element={<RequireTeacherOnly><PassageEditor /></RequireTeacherOnly>} />

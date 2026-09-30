@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { signInWithPopup } from 'firebase/auth'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase.js'
@@ -87,6 +87,10 @@ export default function LoginPage() {
           )}
           {loading ? '로그인 중...' : '구글 계정으로 로그인'}
         </button>
+
+        <p className="mt-6 text-center">
+          <Link to="/help" className="text-sm text-indigo-600 underline underline-offset-2 hover:text-indigo-800">📖 선생님용 사용법 보기</Link>
+        </p>
       </div>
     </div>
   )
