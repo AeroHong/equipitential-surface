@@ -12,7 +12,9 @@ import {
   where,
   writeBatch,
   serverTimestamp,
-  increment
+  increment,
+  arrayUnion,
+  deleteField
 } from 'firebase/firestore'
 import { auth, db } from '../firebase.js'
 
@@ -241,6 +243,38 @@ export async function pauseExam(assignmentId) {
  */
 export async function resumeExam(assignmentId, pausedMs) {
   await updateAssignment(assignmentId, { examPausedAt: null, pausedTotalMs: increment(Math.max(0, Math.round(pausedMs))) })
+}
+
+/**
+ * 추가 응시(결석생 재평가) 열기 — 마감을 풀되 makeupEmails에 든 학생만 새로 응시할 수 있다
+ * (EssayWritePage의 makeupBlocked). 대기실 배정은 평가 시작/일시정지 상태를 초기화해서 교사가
+ * "평가 시작"을 다시 누르면 추가 응시 학생들의 제한시간이 그때부터 흐른다. 원래 회차의 시작
+ * 시각은 previousSessions에 남겨둔다.
+ * @param {object} assignment 현재 배정(id 포함)
+ * @param {string[]} emails 추가 응시를 허용할 학생 이메일
+ */
+export async function openMakeupExam(assignment, emails) {
+  const data = {
+    status: 'open',
+    makeupEmails: emails.map(e => e.toLowerCase()),
+    makeupOpenedAt: serverTimestamp()
+  }
+  if (assignment.waitingRoomEnabled) {
+    Object.assign(data, { examStartedAt: null, examPausedAt: null, pausedTotalMs: 0 })
+    if (assignment.examStartedAt) {
+      data.previousSessions = arrayUnion({
+        startedAt: assignment.examStartedAt,
+        pausedTotalMs: Number(assignment.pausedTotalMs) || 0,
+        makeup: Array.isArray(assignment.makeupEmails) && assignment.makeupEmails.length > 0
+      })
+    }
+  }
+  await updateAssignment(assignment.id, data)
+}
+
+/** 추가 응시 대상 제한을 없앤다 — 이후엔 일반 배정처럼 누구나 들어올 수 있다. */
+export async function clearMakeupExam(assignmentId) {
+  await updateAssignment(assignmentId, { makeupEmails: deleteField() })
 }
 
 

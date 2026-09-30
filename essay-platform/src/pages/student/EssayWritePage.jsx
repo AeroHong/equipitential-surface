@@ -136,6 +136,13 @@ export default function EssayWritePage() {
   const isStaffAccount = userRole === 'teacher' || userRole === 'super_admin' || userRole === 'teacher_pending'
   const needsIdentity = isForeignAccount && !isStaffAccount && !userInfo?.manualIdentity
 
+  // 추가 응시: 교사가 결석생만 골라 마감을 풀면(services/essay.js openMakeupExam) 그 학생들만
+  // 들어올 수 있다. 원래 회차 학생은 제출물을 불러오지도 않고 안내만 본다 — 대기실 배정은 시작
+  // 시각이 초기화되므로, 불러오면 제출 안 된 제출물의 제한시간이 풀려버린다.
+  const makeupEmails = assignment?.makeupEmails
+  const makeupActive = Array.isArray(makeupEmails) && makeupEmails.length > 0 && assignment?.status !== 'closed'
+  const makeupBlocked = makeupActive && !isStaffAccount && !makeupEmails.includes((user?.email || '').toLowerCase())
+
   // 대기실: 교사가 평가를 시작하기 전엔 지문·양식을 아예 불러오지 않고 제출물도 만들지 않는다
   // (startedAt이 실제 시작 시각을 가리키도록).
   const waiting = Boolean(assignment?.waitingRoomEnabled && !assignment?.examStartedAt && !submission)
@@ -145,7 +152,7 @@ export default function EssayWritePage() {
   const pausedAtMs = getPausedAtMs(assignment)
   const paused = pausedAtMs != null
   const showWaitingRoom = waiting || paused
-  const readyToLoadContent = Boolean(assignment) && !needsIdentity && !waiting && !(paused && !submission)
+  const readyToLoadContent = Boolean(assignment) && !needsIdentity && !makeupBlocked && !waiting && !(paused && !submission)
   const contentLoadStartedRef = useRef(false)
   const serverOffsetMs = useServerTimeOffset()
   const serverOffsetRef = useRef(0)
@@ -271,7 +278,7 @@ export default function EssayWritePage() {
   }, { delay: 700 })
 
   const { logInput, logKeydown, logPaste, flushNow: flushLogs } = useEssayLogger(submission?.id)
-  const { updateTyping } = usePresence({ assignmentId, uid: user?.uid, enabled: !locked })
+  const { updateTyping } = usePresence({ assignmentId, uid: user?.uid, enabled: !locked && !makeupBlocked })
 
   // 작성 로그(리플레이용)와 presence("입력 중" 표시)는 같은 입력 이벤트에서 함께 갱신한다 —
   // 로깅 자체는 useEssayLogger가, 실시간 "입력 중" 표시는 usePresence가 각자 책임진다.
@@ -383,6 +390,19 @@ export default function EssayWritePage() {
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
           <p className="text-gray-500 mb-4">{error}</p>
+          <button onClick={() => navigate('/')} className="text-indigo-600 text-sm underline">홈으로</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (makeupBlocked) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
+        <div className="text-center">
+          <p className="text-3xl mb-2">🔒</p>
+          <p className="text-gray-800 font-bold mb-1">마감된 평가입니다</p>
+          <p className="text-gray-500 text-sm mb-4">지금은 추가 응시 대상 학생만 들어올 수 있습니다.</p>
           <button onClick={() => navigate('/')} className="text-indigo-600 text-sm underline">홈으로</button>
         </div>
       </div>

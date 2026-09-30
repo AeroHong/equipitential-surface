@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ref, onValue } from 'firebase/database'
 import { useAuth } from '../../App.jsx'
-import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, pauseExam, resumeExam, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
+import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, pauseExam, resumeExam, openMakeupExam, clearMakeupExam, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
@@ -103,6 +103,8 @@ export default function AssignmentDashboard() {
   const [loadingRoster, setLoadingRoster] = useState(false)
   const [groupFilter, setGroupFilter] = useState('all') // 'all' | courseId | UNMATCHED_FILTER | ABSENT_FILTER
   const [highlightSubId, setHighlightSubId] = useState(null) // 이탈 알림에서 고른 학생 행 강조
+  const [selectedAbsent, setSelectedAbsent] = useState([]) // 추가 응시를 열어줄 미참여 학생 이메일
+  const [openingMakeup, setOpeningMakeup] = useState(false)
 
   useEffect(() => {
     let unsub = () => {}
@@ -216,6 +218,42 @@ export default function AssignmentDashboard() {
     const nextStatus = assignment.status === 'closed' ? 'open' : 'closed'
     await updateAssignment(assignmentId, { status: nextStatus })
     setAssignment(a => ({ ...a, status: nextStatus }))
+  }
+
+  // 미참여 학생 중 고른 학생만 응시할 수 있게 마감을 푼다 — 다른 학생은 들어와도 막힌다.
+  async function handleOpenMakeup() {
+    if (!assignment || selectedAbsent.length === 0) return
+    const names = selectedAbsent.map(email => roster?.[email]?.name || email)
+    const waitingNote = assignment.waitingRoomEnabled
+      ? '\n\n대기실이 초기화됩니다. 학생들이 들어오면 "평가 시작"을 다시 눌러주세요(제한시간은 그때부터).'
+      : ''
+    if (!window.confirm(`다음 ${names.length}명만 응시할 수 있도록 마감을 해제할까요?\n${names.join(', ')}\n\n다른 학생은 과제 링크로 들어와도 응시할 수 없습니다.${waitingNote}`)) return
+    setOpeningMakeup(true)
+    try {
+      await openMakeupExam(assignment, selectedAbsent)
+      setAssignment(a => ({
+        ...a,
+        status: 'open',
+        makeupEmails: selectedAbsent.map(e => e.toLowerCase()),
+        ...(a.waitingRoomEnabled ? { examStartedAt: null, examPausedAt: null, pausedTotalMs: 0 } : {})
+      }))
+      setSelectedAbsent([])
+    } catch (err) {
+      console.error('추가 응시 열기 실패:', err)
+      alert('추가 응시를 여는 중 오류가 발생했습니다.')
+    } finally {
+      setOpeningMakeup(false)
+    }
+  }
+
+  async function handleClearMakeup() {
+    if (!window.confirm('추가 응시 대상 제한을 해제할까요? 이후에는 과제 링크로 들어오는 모든 학생이 응시할 수 있습니다.')) return
+    await clearMakeupExam(assignmentId)
+    setAssignment(a => ({ ...a, makeupEmails: undefined }))
+  }
+
+  function toggleAbsentSelected(email) {
+    setSelectedAbsent(prev => (prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]))
   }
 
   // 대기실(waitingRoomEnabled) 배정 전용 — 학생 화면은 배정 문서를 실시간 구독하고 있어서
@@ -492,7 +530,9 @@ export default function AssignmentDashboard() {
   // 명단에는 있는데 이 배정의 제출물이 없는 학생 — 결석 등으로 평가에 안 들어온 학생.
   // 대기실 배정은 평가 시작 전엔 아무도 제출물이 없으므로 시작 후에만 센다.
   const submittedEmails = new Set(submissions.map(s => (s.studentEmail || '').toLowerCase()).filter(Boolean))
-  const absenceMeaningful = !assignment?.waitingRoomEnabled || !!assignment?.examStartedAt
+  const makeupEmails = Array.isArray(assignment?.makeupEmails) ? assignment.makeupEmails : []
+  // 추가 응시를 열어 대기실이 초기화된 뒤에도 원래 회차의 미참여 판정은 그대로 보여준다.
+  const absenceMeaningful = !assignment?.waitingRoomEnabled || !!assignment?.examStartedAt || makeupEmails.length > 0
   const absentStudents = roster && absenceMeaningful
     ? Object.entries(roster)
       .filter(([email]) => !submittedEmails.has(email))
@@ -857,6 +897,45 @@ export default function AssignmentDashboard() {
           </section>
         )}
 
+        {makeupEmails.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3">
+            <p className="text-sm text-orange-800">
+              <span className="font-bold">🔁 추가 응시 {assignment.status === 'closed' ? '(마감됨)' : '진행 중'}</span>
+              {' '}— 대상 {makeupEmails.length}명만 응시 가능:{' '}
+              <span className="text-orange-700">{makeupEmails.map(email => roster?.[email]?.name || email).join(', ')}</span>
+            </p>
+            <button
+              onClick={handleClearMakeup}
+              className="ml-auto rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-100"
+            >
+              대상 제한 해제
+            </button>
+          </div>
+        )}
+
+        {filteredAbsent.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+            <button
+              onClick={() => setSelectedAbsent(prev => (
+                filteredAbsent.every(a => prev.includes(a.email))
+                  ? prev.filter(e => !filteredAbsent.some(a => a.email === e))
+                  : [...new Set([...prev, ...filteredAbsent.map(a => a.email)])]
+              ))}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium text-gray-600 hover:bg-gray-50"
+            >
+              {filteredAbsent.every(a => selectedAbsent.includes(a.email)) ? '미참여 선택 해제' : '미참여 전체 선택'}
+            </button>
+            <button
+              onClick={handleOpenMakeup}
+              disabled={selectedAbsent.length === 0 || openingMakeup}
+              className="rounded-lg bg-orange-500 px-3 py-1.5 font-bold text-white hover:bg-orange-600 disabled:opacity-40"
+            >
+              {openingMakeup ? '여는 중...' : `선택한 ${selectedAbsent.length}명 추가 응시 열기`}
+            </button>
+            <span className="text-gray-400">고른 학생만 들어올 수 있게 마감을 해제합니다.</span>
+          </div>
+        )}
+
         {(hasMultipleClassrooms || (roster && absenceMeaningful)) && (
           <div className="mb-4 flex flex-wrap gap-1.5">
             {[
@@ -1027,14 +1106,31 @@ export default function AssignmentDashboard() {
                   )
                 })}
                 {filteredAbsent.map(a => (
-                  <tr key={`absent-${a.email}`} className="border-b border-gray-50 last:border-0 bg-orange-50/40">
+                  <tr
+                    key={`absent-${a.email}`}
+                    className="border-b border-gray-50 last:border-0 bg-orange-50/40 cursor-pointer"
+                    onClick={() => toggleAbsentSelected(a.email)}
+                  >
                     <td className="px-4 py-3">
-                      <p className="font-medium text-gray-500">{a.name || a.email}</p>
-                      <p className="text-xs text-gray-400">{hasMultipleClassrooms ? a.email : courseNameOf(a.courseId)}</p>
+                      <label className="flex items-start gap-2 cursor-pointer" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedAbsent.includes(a.email)}
+                          onChange={() => toggleAbsentSelected(a.email)}
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-orange-500 focus:ring-orange-300"
+                        />
+                        <span>
+                          <span className="block font-medium text-gray-500">{a.name || a.email}</span>
+                          <span className="block text-xs text-gray-400">{hasMultipleClassrooms ? a.email : courseNameOf(a.courseId)}</span>
+                        </span>
+                      </label>
                     </td>
                     {hasMultipleClassrooms && <td className="px-4 py-3 text-xs text-gray-500">{courseNameOf(a.courseId)}</td>}
                     <td className="px-4 py-3">
                       <span className="text-xs rounded-full px-2 py-0.5 font-medium bg-orange-100 text-orange-700">미참여</span>
+                      {makeupEmails.includes(a.email) && (
+                        <span className="ml-1 text-xs rounded-full px-2 py-0.5 font-medium bg-white border border-orange-300 text-orange-700">추가 응시 대상</span>
+                      )}
                     </td>
                     <td colSpan={99} className="px-4 py-3 text-xs text-gray-300">—</td>
                   </tr>
