@@ -272,7 +272,9 @@ export default function EssayWritePage() {
   // 로깅 자체는 useEssayLogger가, 실시간 "입력 중" 표시는 usePresence가 각자 책임진다.
   // 화면 이탈 감지 — 제한시간이 있는 평가에서만(utils/focusGuard.js). 새로고침하면 전체화면이
   // 풀리므로 examEntered는 저장하지 않고 매번 시작 안내(전체화면 진입 버튼)부터 다시 거친다.
-  const focusGuardOn = isFocusGuardActive(assignment) && Boolean(submission) && !locked && !submission?.timeLimitWaived
+  // 교사가 "재열기"한 학생(timeLimitWaived)도 계속 감지한다 — 제한시간만 풀어주는 것이지 평가가
+  // 끝난 게 아니다(예전엔 여기서 제외해서 재열기 뒤로 이탈이 더 안 잡혔다).
+  const focusGuardOn = isFocusGuardActive(assignment) && Boolean(submission) && !locked
   const [examEntered, setExamEntered] = useState(false)
   const focusGuard = useFocusGuard({ enabled: focusGuardOn && examEntered, submissionId: submission?.id, serverOffsetMs })
 

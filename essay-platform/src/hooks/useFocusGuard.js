@@ -99,7 +99,9 @@ export function useFocusGuard({ enabled, submissionId, serverOffsetMs }) {
 
     function handleFocus() {
       clearTimeout(blurTimerRef.current)
-      if (leavingRef.current?.type === 'blur') endLeave({ showWarning: true })
+      // PC에서 사진 첨부 창은 hidden이 아니라 blur로만 이탈을 만든다 — 창을 닫고 돌아왔을 때
+      // 무시 상태도 여기서 풀어야 한다(안 그러면 그 뒤의 이탈이 전부 무시된다).
+      if (leavingRef.current?.type === 'blur' || suppressedLeaveRef.current) endLeave({ showWarning: true })
     }
 
     function handleFullscreenChange() {
