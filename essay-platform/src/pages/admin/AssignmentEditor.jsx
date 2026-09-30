@@ -29,6 +29,7 @@ export default function AssignmentEditor() {
   const [dueAtStr, setDueAtStr] = useState('')
   const [wordLimit, setWordLimit] = useState('')
   const [timeLimitMinutes, setTimeLimitMinutes] = useState('')
+  const [focusGuardEnabled, setFocusGuardEnabled] = useState(true)
   const [status, setStatus] = useState('open')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(isEdit || isCopy)
@@ -80,6 +81,7 @@ export default function AssignmentEditor() {
           setDueAtStr(dueDate ? [dueDate.getFullYear(), String(dueDate.getMonth() + 1).padStart(2, '0'), String(dueDate.getDate()).padStart(2, '0')].join('-') : '')
           setWordLimit(assignment.wordLimit ?? '')
           setTimeLimitMinutes(assignment.timeLimitMinutes ?? '')
+          setFocusGuardEnabled(assignment.focusGuardEnabled !== false)
           if (!isCopy) setStatus(assignment.status || 'open')
         } else if (!isEdit) {
           if (availablePassages.length) setPassageId(availablePassages[0].id)
@@ -162,7 +164,8 @@ export default function AssignmentEditor() {
           status,
           calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
           waitingRoomEnabled,
-          timeLimitMinutes: parsedTimeLimit
+          timeLimitMinutes: parsedTimeLimit,
+          focusGuardEnabled
         })
         navigate(`/admin/assignments/${assignmentId}`)
         return
@@ -175,6 +178,7 @@ export default function AssignmentEditor() {
         calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
         waitingRoomEnabled,
         timeLimitMinutes: parsedTimeLimit,
+        focusGuardEnabled,
         title: title.trim(),
         dueAt,
         wordLimit: wordLimit ? Number(wordLimit) : null
@@ -406,6 +410,24 @@ export default function AssignmentEditor() {
               : '학생마다 처음 들어온 순간부터 잽니다. 모두 같은 시각에 시작하려면 위의 "평가 시작 전 준비 시간(대기실)"을 켜세요.'}
             {' '}학생 화면에 남은 시간이 표시되고, 시간이 끝나면 그때까지 쓴 내용으로 자동 제출됩니다. 진행 중에 바꾸면 학생 화면에 바로 반영됩니다.
           </p>
+          {/* 화면 이탈 감지는 제한시간이 있는 평가에서만 작동한다(utils/focusGuard.js). */}
+          {timeLimitMinutes !== '' && (
+            <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3.5">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={focusGuardEnabled}
+                  onChange={e => setFocusGuardEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300"
+                />
+                <span className="text-sm font-bold text-gray-800">🚨 화면 이탈 감지 (평가 중 전체화면 사용)</span>
+              </label>
+              <p className="mt-1.5 text-xs text-gray-400">
+                학생이 평가를 시작할 때 전체화면으로 전환하고, 다른 탭·앱으로 이동하거나 전체화면을 빠져나가면 횟수와 시간을 기록해 대시보드에 바로 알립니다. 학생 화면에는 경고창이 뜹니다.
+                다른 탭을 원천 차단하려면 시험 전에 태블릿의 "화면 고정"(안드로이드) / "사용법 유도"(아이패드)를 켜도록 안내하세요 — 자세한 방법은 사용법 페이지 참고.
+              </p>
+            </div>
+          )}
         </div>
 
         {responseType === 'essay' && (

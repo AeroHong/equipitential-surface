@@ -12,6 +12,8 @@ import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
 import { getExamDeadlineMs } from '../../utils/examTimer.js'
 import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
 import ExamTimer from '../../components/ExamTimer.jsx'
+import LeaveAlerts from '../../components/LeaveAlerts.jsx'
+import { isFocusGuardActive, formatDuration } from '../../utils/focusGuard.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, courseWorkExists, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
 
 /** handlePublishToClassroom과 반드시 같은 문구를 써야 한다 — "설명 동기화" 버튼이
@@ -75,6 +77,7 @@ export default function AssignmentDashboard() {
   const [roster, setRoster] = useState(null) // null: 아직 안 불러옴, {}: 불러왔지만 빈 수업들
   const [loadingRoster, setLoadingRoster] = useState(false)
   const [groupFilter, setGroupFilter] = useState('all') // 'all' | courseId | UNMATCHED_FILTER
+  const [highlightSubId, setHighlightSubId] = useState(null) // 이탈 알림에서 고른 학생 행 강조
 
   useEffect(() => {
     let unsub = () => {}
@@ -461,6 +464,16 @@ export default function AssignmentDashboard() {
   // essay_calculator도 structured와 같은 sections 데이터 모양을 쓴다([[EssayWritePage]]의
   // usesSections와 같은 이유) — 대시보드 집계/표시도 둘을 동일하게 취급한다.
   const usesSections = isStructured || isGradable
+  // 화면 이탈 감지는 제한시간 평가에서만 켜진다 — 그 전에 쌓인 기록이 있으면 컬럼은 계속 보여준다.
+  const focusGuardActive = isFocusGuardActive(assignment)
+  const showLeaveColumn = focusGuardActive || submissions.some(s => s.leaveCount > 0)
+
+  function focusSubmissionRow(sub) {
+    setGroupFilter('all')
+    setHighlightSubId(sub.id)
+    setTimeout(() => document.getElementById(`sub-row-${sub.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50)
+    setTimeout(() => setHighlightSubId(h => (h === sub.id ? null : h)), 4000)
+  }
 
   // sections 기반 제출물은 붙여넣기/AI 신호가 섹션별로 쌓이므로(services/essay.js의
   // sections.{id}.* dot-path 증가) 대시보드 표시용으로 섹션들을 합산해서 보여준다.
@@ -804,6 +817,7 @@ export default function AssignmentDashboard() {
                   {hasMultipleClassrooms && <th className="px-4 py-3 font-medium">소속 수업</th>}
                   <th className="px-4 py-3 font-medium">상태</th>
                   <th className="px-4 py-3 font-medium">접속</th>
+                  {showLeaveColumn && <th className="px-4 py-3 font-medium">화면 이탈</th>}
                   <th className="px-4 py-3 font-medium">{usesSections ? '완료 섹션' : '글자수'}</th>
                   {isGradable && <th className="px-4 py-3 font-medium">점수</th>}
                   <th className="px-4 py-3 font-medium">마지막 저장</th>
@@ -825,7 +839,8 @@ export default function AssignmentDashboard() {
                   return (
                     <tr
                       key={sub.id}
-                      className="border-b border-gray-50 last:border-0 hover:bg-gray-50 cursor-pointer"
+                      id={`sub-row-${sub.id}`}
+                      className={`border-b border-gray-50 last:border-0 cursor-pointer transition-colors ${highlightSubId === sub.id ? 'bg-red-50' : 'hover:bg-gray-50'}`}
                       onClick={() => navigate(`/admin/assignments/${assignmentId}/student/${sub.studentUid}`)}
                     >
                       <td className="px-4 py-3">
@@ -860,6 +875,17 @@ export default function AssignmentDashboard() {
                           <PresenceBadge state={presenceMap[sub.studentUid]?.state} />
                         )}
                       </td>
+                      {showLeaveColumn && (
+                        <td className="px-4 py-3 text-xs">
+                          {sub.leaveCount > 0 ? (
+                            <span className="font-medium text-red-600" title={sub.lastLeftAt ? `마지막 이탈: ${formatClock(sub.lastLeftAt)}` : ''}>
+                              ⚠ {sub.leaveCount}회{sub.leaveTotalMs ? ` · ${formatDuration(sub.leaveTotalMs)}` : ''}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">0회</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-gray-600">
                         {usesSections
                           ? (completion ? `${completion.done} / ${completion.total}` : '—')
@@ -916,6 +942,8 @@ export default function AssignmentDashboard() {
           </div>
         )}
       </main>
+
+      {focusGuardActive && <LeaveAlerts submissions={submissions} onSelect={focusSubmissionRow} />}
 
       {memoTarget && (
         <div

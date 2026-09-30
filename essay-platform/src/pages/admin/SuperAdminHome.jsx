@@ -97,6 +97,12 @@ export default function SuperAdminHome() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/help')}
+            className="text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 font-medium transition-colors"
+          >
+            ❓ 사용법
+          </button>
           <span className="text-sm text-gray-600 hidden sm:block">{userInfo?.name || user?.displayName}</span>
           <button
             onClick={async () => { await signOut(auth); navigate('/login') }}

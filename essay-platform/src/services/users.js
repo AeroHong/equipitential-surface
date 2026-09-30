@@ -5,7 +5,8 @@ import {
   updateDoc,
   query,
   where,
-  serverTimestamp
+  serverTimestamp,
+  deleteField
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
 
@@ -109,6 +110,20 @@ export async function setManualStudentIdentity(uid, { studentId, name }) {
   await updateDoc(doc(db, 'users', uid), {
     name: `${studentId.trim()}-${name.trim()}`,
     manualIdentity: true,
+    updatedAt: serverTimestamp()
+  })
+}
+
+/**
+ * 교사/관리자 계정에 잘못 붙은 학생용 수동 신원(예: 학생 화면 테스트 중 입력한 "99999-테스트학생")을
+ * 걷어내고 이름을 구글 표시 이름으로 되돌린다. App.jsx의 AuthProvider가 자동으로 한 번 호출한다.
+ * @param {string} uid
+ * @param {string} displayName
+ */
+export async function clearStaffManualIdentity(uid, displayName) {
+  await updateDoc(doc(db, 'users', uid), {
+    name: displayName || '',
+    manualIdentity: deleteField(),
     updatedAt: serverTimestamp()
   })
 }

@@ -3,6 +3,7 @@ import { htmlToPlainText } from '../utils/richText.js'
 import { sanitizeAnswerHtml } from '../utils/sanitizeHtml.js'
 import { isImageFile, uploadAnswerImage } from '../services/storage.js'
 import { createMathHtml, decodeLatex, decodeMathExpression, insertLineBreakAfterMath, mathToLatex, prepareMathForStorage, renderMathInElement } from '../utils/mathExpression.js'
+import { suppressNextLeave } from '../utils/focusGuard.js'
 
 // mathlive(전용 수식 편집 라이브러리)는 수식 버튼을 처음 누르기 전까지 아예 안 실리도록
 // 별도 청크로 lazy load한다 — MathComposerDialog.jsx만 이 패키지를 import한다.
@@ -1144,7 +1145,7 @@ export default function EssayEditor({
         <button
           type="button"
           onMouseDown={e => e.preventDefault()}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => { suppressNextLeave(); fileInputRef.current?.click() }}
           disabled={disabled}
           title="이미지 삽입 (붙여넣기·끌어놓기도 됩니다)"
           className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"

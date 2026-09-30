@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getAssignment, getSubmission, getReplayLogs, saveGrading, setScoreReleased } from '../../services/essay.js'
+import { getAssignment, getSubmission, getReplayLogs, saveGrading, setScoreReleased, getFocusEvents } from '../../services/essay.js'
+import { LEAVE_TYPE_LABELS, DISPLAY_MODE_LABELS, formatDuration } from '../../utils/focusGuard.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { sanitizeAnswerHtml, sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
 import { renderMathInElement } from '../../utils/mathExpression.js'
@@ -148,6 +149,44 @@ function GradingPanel({ template, submission, onSaved }) {
   )
 }
 
+/** 제한시간 평가의 화면 이탈 기록(hooks/useFocusGuard.js가 남김) — 없으면 아무것도 안 그린다. */
+function FocusEventsPanel({ submission, events }) {
+  if (!submission?.leaveCount && !events?.length && !submission?.displayMode) return null
+  const clock = ms => new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return (
+    <div className="print:hidden mt-4 bg-white rounded-2xl border border-gray-200 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-gray-700">🚨 화면 이탈 기록</h2>
+        {submission.displayMode && (
+          <span className="text-xs text-gray-400">접속 환경: {DISPLAY_MODE_LABELS[submission.displayMode] || submission.displayMode}</span>
+        )}
+      </div>
+      {submission.leaveCount > 0 ? (
+        <>
+          <p className="text-sm text-red-600 font-medium mb-2">
+            총 {submission.leaveCount}회{submission.leaveTotalMs ? ` · 누적 ${formatDuration(submission.leaveTotalMs)}` : ''}
+          </p>
+          {events?.length > 0 ? (
+            <ul className="divide-y divide-gray-50 text-sm">
+              {events.map(e => (
+                <li key={e.id} className="flex items-center justify-between py-1.5">
+                  <span className="text-gray-700">{clock(e.leftAt)} ~ {clock(e.returnedAt)} <span className="text-xs text-gray-400">· {LEAVE_TYPE_LABELS[e.type] || e.type}</span></span>
+                  <span className="text-xs font-medium text-gray-600">{formatDuration(e.durationMs)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {(events?.length || 0) < submission.leaveCount && (
+            <p className="mt-2 text-xs text-gray-400">돌아오지 않은(창을 닫았거나 제출 중이던) 이탈은 지속시간이 기록되지 않습니다.</p>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-gray-400">이탈 기록이 없습니다.</p>
+      )}
+    </div>
+  )
+}
+
 function escapeHtml(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
@@ -197,6 +236,7 @@ export default function ReplayView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exportingDocx, setExportingDocx] = useState(false)
+  const [focusEvents, setFocusEvents] = useState(null)
 
   useEffect(() => {
     const subId = `${assignmentId}__${uid}`
@@ -205,6 +245,7 @@ export default function ReplayView() {
         setAssignment(a)
         setSubmission(sub)
         setLogs(replayLogs)
+        if (sub?.leaveCount > 0) getFocusEvents(subId).then(setFocusEvents).catch(() => setFocusEvents([]))
         if ((a?.responseType === 'structured' || a?.responseType === 'essay_calculator') && a.templateId) {
           const tpl = await getTemplate(a.templateId)
           setTemplate(tpl)
@@ -341,6 +382,7 @@ export default function ReplayView() {
                 <FullAnswerView usesSections={usesSections} template={template} submission={submission} />
               </div>
               {isGradable && <GradingPanel template={template} submission={submission} onSaved={handleGradingSaved} />}
+              <FocusEventsPanel submission={submission} events={focusEvents} />
             </section>
 
             {/* 오른쪽: 기존 로그 점검(리플레이) 기능 */}

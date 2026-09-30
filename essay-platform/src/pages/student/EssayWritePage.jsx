@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import {
   subscribeAssignment, getPassage, getOrCreateSubmission,
-  saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections, subscribeSubmission
+  saveSubmissionDraft, submitSubmission, saveSectionsDraft, submitSections, subscribeSubmission,
+  recordDisplayMode
 } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { setManualStudentIdentity } from '../../services/users.js'
@@ -21,11 +22,14 @@ import PracticePanel from './PracticePanel.jsx'
 import ExamTimer from '../../components/ExamTimer.jsx'
 import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
 import { getExamDeadlineMs } from '../../utils/examTimer.js'
+import { useFocusGuard } from '../../hooks/useFocusGuard.js'
+import { isFocusGuardActive, detectDisplayMode } from '../../utils/focusGuard.js'
+import FocusGuardOverlay from '../../components/FocusGuardOverlay.jsx'
 
 export default function EssayWritePage() {
   const { assignmentId } = useParams()
   const navigate = useNavigate()
-  const { user, userInfo } = useAuth()
+  const { user, userRole, userInfo } = useAuth()
 
   const [assignment, setAssignment] = useState(null)
   const [passage, setPassage] = useState(null)
@@ -127,7 +131,10 @@ export default function EssayWritePage() {
   // 다음부턴(다른 배정에서도) 다시 묻지 않는다. 같은 도메인이면 지금처럼 그대로 통과.
   const studentDomain = user?.email?.includes('@') ? user.email.split('@')[1] : ''
   const isForeignAccount = Boolean(assignment?.teacherDomain) && Boolean(studentDomain) && studentDomain !== assignment.teacherDomain
-  const needsIdentity = isForeignAccount && !userInfo?.manualIdentity
+  // 교사/관리자가 학생 화면을 테스트하는 경우엔 묻지 않는다 — 여기서 입력한 학번·이름이
+  // users/{uid}.name을 덮어써서 관리자 헤더에 "99999-테스트학생"처럼 남는 버그가 있었다.
+  const isStaffAccount = userRole === 'teacher' || userRole === 'super_admin' || userRole === 'teacher_pending'
+  const needsIdentity = isForeignAccount && !isStaffAccount && !userInfo?.manualIdentity
 
   // 대기실: 교사가 평가를 시작하기 전엔 지문·양식을 아예 불러오지 않고 제출물도 만들지 않는다
   // (startedAt이 실제 시작 시각을 가리키도록). 한 번 문항을 받은 뒤(submission 있음)엔 교사가
@@ -263,6 +270,18 @@ export default function EssayWritePage() {
 
   // 작성 로그(리플레이용)와 presence("입력 중" 표시)는 같은 입력 이벤트에서 함께 갱신한다 —
   // 로깅 자체는 useEssayLogger가, 실시간 "입력 중" 표시는 usePresence가 각자 책임진다.
+  // 화면 이탈 감지 — 제한시간이 있는 평가에서만(utils/focusGuard.js). 새로고침하면 전체화면이
+  // 풀리므로 examEntered는 저장하지 않고 매번 시작 안내(전체화면 진입 버튼)부터 다시 거친다.
+  const focusGuardOn = isFocusGuardActive(assignment) && Boolean(submission) && !locked && !submission?.timeLimitWaived
+  const [examEntered, setExamEntered] = useState(false)
+  const focusGuard = useFocusGuard({ enabled: focusGuardOn && examEntered, submissionId: submission?.id, serverOffsetMs })
+
+  async function handleExamEnter() {
+    await focusGuard.enterFullscreen()
+    setExamEntered(true)
+    if (submission?.id) recordDisplayMode(submission.id, detectDisplayMode()).catch(() => {})
+  }
+
   function handleLogInput(entry) {
     logInput(entry)
     updateTyping()
@@ -411,6 +430,19 @@ export default function EssayWritePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
+      {focusGuardOn && !waiting && !examEntered && (
+        <FocusGuardOverlay mode="start" onStart={handleExamEnter} />
+      )}
+      {focusGuardOn && examEntered && focusGuard.blocking && (
+        <FocusGuardOverlay
+          mode="warning"
+          warning={focusGuard.warning}
+          fullscreenLost={focusGuard.fullscreenLost}
+          usingFullscreen={focusGuard.usingFullscreen}
+          totalLeaveCount={Math.max(submission?.leaveCount || 0, focusGuard.leaveCount)}
+          onAcknowledge={focusGuard.acknowledge}
+        />
+      )}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm sticky top-0 z-10">
         <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-gray-600 transition-colors">
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

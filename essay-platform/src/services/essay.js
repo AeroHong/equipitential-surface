@@ -141,6 +141,8 @@ export async function createAssignment(data) {
     waitingRoomEnabled: !!data.waitingRoomEnabled,
     examStartedAt: null,
     timeLimitMinutes: data.timeLimitMinutes || null,
+    // 화면 이탈 감지 — 제한시간이 있는 배정에서만 의미가 있다(utils/focusGuard.js의 isFocusGuardActive).
+    focusGuardEnabled: data.focusGuardEnabled !== false,
     title: data.title || '',
     dueAt: data.dueAt || null,
     wordLimit: data.wordLimit || null,
@@ -705,4 +707,47 @@ export async function getReplayLogs(subId) {
     .sort((a, b) => a.t - b.t)
 
   return { inputEvents, keydownEvents, pasteEvents }
+}
+
+// ─── 화면 이탈 기록 (제한시간 평가 전용, hooks/useFocusGuard.js) ─────────────
+//
+// 이탈하는 "순간"에 제출물 문서의 leaveCount를 올린다 — 교사 대시보드가 subscribeSubmissions로
+// 바로 알아채게 하기 위함(탭이 백그라운드로 가도 이미 요청한 쓰기는 큐에 남아 결국 전송된다).
+// 돌아왔을 때 지속시간까지 포함한 상세 기록을 focusEvents 서브컬렉션에 남긴다.
+
+/**
+ * @param {string} subId
+ * @param {'hidden'|'blur'|'fullscreen_exit'} type
+ */
+export async function recordLeaveStart(subId, type) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), {
+    leaveCount: increment(1),
+    lastLeftAt: serverTimestamp(),
+    lastLeaveType: type
+  })
+}
+
+/**
+ * @param {string} subId
+ * @param {{type: string, leftAt: number, returnedAt: number, durationMs: number}} event 시각은 ms(서버 보정)
+ */
+export async function recordLeaveEnd(subId, event) {
+  const batch = writeBatch(db)
+  batch.set(doc(collection(db, 'essaySubmissions', subId, 'focusEvents')), { ...event, createdAt: serverTimestamp() })
+  batch.update(doc(db, 'essaySubmissions', subId), { leaveTotalMs: increment(Math.max(0, Math.round(event.durationMs || 0))) })
+  await batch.commit()
+}
+
+/** 학생의 접속 환경(전체화면/설치 앱/일반 브라우저)을 기록한다. */
+export async function recordDisplayMode(subId, displayMode) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), { displayMode })
+}
+
+/**
+ * @param {string} subId
+ * @returns {Promise<Array<{type:string, leftAt:number, returnedAt:number, durationMs:number}>>} 시간순
+ */
+export async function getFocusEvents(subId) {
+  const snap = await getDocs(collection(db, 'essaySubmissions', subId, 'focusEvents'))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.leftAt || 0) - (b.leftAt || 0))
 }

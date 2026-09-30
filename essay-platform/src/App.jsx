@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { onAuthStateChanged } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db } from './firebase.js'
-import { requestTeacherRole } from './services/users.js'
+import { requestTeacherRole, clearStaffManualIdentity } from './services/users.js'
 
 import LoginPage from './pages/LoginPage.jsx'
 import EssayWritePage from './pages/student/EssayWritePage.jsx'
@@ -17,6 +17,7 @@ import ReplayView from './pages/admin/ReplayView.jsx'
 import TemplateList from './pages/admin/templates/TemplateList.jsx'
 import TemplateEditor from './pages/admin/templates/TemplateEditor.jsx'
 import QuestionSetEditor from './pages/admin/templates/QuestionSetEditor.jsx'
+import HelpPage from './pages/admin/HelpPage.jsx'
 
 // ─── Auth Context (physlab의 App.jsx와 동일한 패턴 — 같은 Firebase 프로젝트를 쓰므로 users/{uid}.role도 그대로 통한다) ──
 export const AuthContext = createContext(null)
@@ -30,6 +31,7 @@ function AuthProvider({ children }) {
   const [userRole, setUserRole] = useState(null)
   const [userInfo, setUserInfo] = useState(null)
   const [loading, setLoading] = useState(true)
+  const identityRepairTriedRef = useRef(false)
 
   useEffect(() => {
     // users/{uid}를 실시간 구독한다(예전엔 로그인 시 한 번만 getDoc으로 읽었다) — super_admin이
@@ -46,6 +48,14 @@ function AuthProvider({ children }) {
           snap => {
             if (snap.exists()) {
               const data = snap.data()
+              // 교사/관리자가 학생 화면을 테스트하다 학번·이름 입력창에 적은 값이 name을 덮어쓴
+              // 경우(예전 버그) 한 번 자동으로 되돌린다 — EssayWritePage는 이제 교직원에겐 묻지 않는다.
+              const isStaff = data.role === 'teacher' || data.role === 'super_admin' || data.role === 'teacher_pending'
+              if (isStaff && data.manualIdentity && !identityRepairTriedRef.current) {
+                identityRepairTriedRef.current = true
+                clearStaffManualIdentity(firebaseUser.uid, firebaseUser.displayName)
+                  .catch(err => console.error('교직원 계정 이름 복구 실패:', err))
+              }
               setUserRole(data.role || 'student')
               setUserInfo(data)
             } else {
@@ -219,6 +229,7 @@ export default function App() {
           <Route path="/write/:assignmentId" element={<RequireAuth><EssayWritePage /></RequireAuth>} />
 
           <Route path="/admin" element={<RequireAdmin><AdminHome /></RequireAdmin>} />
+          <Route path="/help" element={<RequireAdmin><HelpPage /></RequireAdmin>} />
           <Route path="/admin/passages" element={<RequireTeacherOnly><PassageList /></RequireTeacherOnly>} />
           <Route path="/admin/passages/new" element={<RequireTeacherOnly><PassageEditor /></RequireTeacherOnly>} />
           <Route path="/admin/passages/:passageId/edit" element={<RequireTeacherOnly><PassageEditor /></RequireTeacherOnly>} />
