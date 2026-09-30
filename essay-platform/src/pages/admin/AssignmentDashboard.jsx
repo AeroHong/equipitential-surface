@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ref, onValue } from 'firebase/database'
 import { useAuth } from '../../App.jsx'
-import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, pauseExam, resumeExam, openMakeupExam, clearMakeupExam, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
+import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, pauseExam, resumeExam, openMakeupExam, clearMakeupExam, linkSubmissionToRoster, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
@@ -105,6 +105,8 @@ export default function AssignmentDashboard() {
   const [highlightSubId, setHighlightSubId] = useState(null) // 이탈 알림에서 고른 학생 행 강조
   const [selectedAbsent, setSelectedAbsent] = useState([]) // 추가 응시를 열어줄 미참여 학생 이메일
   const [openingMakeup, setOpeningMakeup] = useState(false)
+  const [linkTarget, setLinkTarget] = useState(null) // 제출물과 연결할 미참여 학생 {email, name, courseId}
+  const [linking, setLinking] = useState(false)
 
   useEffect(() => {
     let unsub = () => {}
@@ -521,15 +523,40 @@ export default function AssignmentDashboard() {
     : null
 
   /** 제출물이 어느 수업 소속인지 — roster를 불러오기 전이면 null(판정 불가). */
+  // 명단과 대조할 이메일 — 교사가 직접 연결한 값(rosterEmail)이 로그인 이메일보다 우선한다.
+  function matchEmailOf(sub) {
+    return (sub.rosterEmail || sub.studentEmail || '').toLowerCase()
+  }
+
   function courseIdForSubmission(sub) {
     if (!roster) return null
-    const email = (sub.studentEmail || '').toLowerCase()
+    const email = matchEmailOf(sub)
     return email && roster[email] ? roster[email].courseId : UNMATCHED_FILTER
+  }
+
+  async function handleLink(sub) {
+    if (!linkTarget) return
+    setLinking(true)
+    try {
+      await linkSubmissionToRoster(sub.id, linkTarget.email)
+      setSelectedAbsent(prev => prev.filter(e => e !== linkTarget.email))
+      setLinkTarget(null)
+    } catch (err) {
+      console.error('제출물 연결 실패:', err)
+      alert('연결 중 오류가 발생했습니다.')
+    } finally {
+      setLinking(false)
+    }
+  }
+
+  async function handleUnlink(sub) {
+    if (!window.confirm(`${sub.studentName || '이 학생'}의 명단 연결을 해제할까요?`)) return
+    await linkSubmissionToRoster(sub.id, null)
   }
 
   // 명단에는 있는데 이 배정의 제출물이 없는 학생 — 결석 등으로 평가에 안 들어온 학생.
   // 대기실 배정은 평가 시작 전엔 아무도 제출물이 없으므로 시작 후에만 센다.
-  const submittedEmails = new Set(submissions.map(s => (s.studentEmail || '').toLowerCase()).filter(Boolean))
+  const submittedEmails = new Set(submissions.map(matchEmailOf).filter(Boolean))
   const makeupEmails = Array.isArray(assignment?.makeupEmails) ? assignment.makeupEmails : []
   // 추가 응시를 열어 대기실이 초기화된 뒤에도 원래 회차의 미참여 판정은 그대로 보여준다.
   const absenceMeaningful = !assignment?.waitingRoomEnabled || !!assignment?.examStartedAt || makeupEmails.length > 0
@@ -1001,7 +1028,8 @@ export default function AssignmentDashboard() {
                   const subCourseName = subCourseId && subCourseId !== UNMATCHED_FILTER
                     ? courseNameOf(subCourseId)
                     : null
-                  const rosterEntry = roster?.[(sub.studentEmail || '').toLowerCase()]
+                  const rosterEntry = roster?.[matchEmailOf(sub)]
+                  const loginEmail = (sub.studentEmail || '').toLowerCase()
                   return (
                     <tr
                       key={sub.id}
@@ -1019,6 +1047,24 @@ export default function AssignmentDashboard() {
                         <p className="text-xs text-gray-400">
                           {sub.studentClass ? `${sub.studentClass}반` : (!hasMultipleClassrooms && rosterEntry ? courseNameOf(rosterEntry.courseId) : '')}
                         </p>
+                        {/* 어느 계정으로 로그인했는지 — 명단과 다른 계정이면 여기서 바로 보인다. */}
+                        <p className="text-[11px] text-gray-400 break-all">
+                          {loginEmail || '(이메일 없음)'}
+                          {roster && !rosterEntry && (
+                            <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">명단에 없음</span>
+                          )}
+                        </p>
+                        {sub.rosterEmail && (
+                          <p className="text-[11px] text-indigo-500">
+                            🔗 {rosterEntry?.name || sub.rosterEmail} 으로 연결됨
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUnlink(sub) }}
+                              className="ml-1 text-gray-400 underline hover:text-red-500"
+                            >
+                              해제
+                            </button>
+                          </p>
+                        )}
                       </td>
                       {hasMultipleClassrooms && (
                         <td className="px-4 py-3 text-xs text-gray-500">
@@ -1132,7 +1178,15 @@ export default function AssignmentDashboard() {
                         <span className="ml-1 text-xs rounded-full px-2 py-0.5 font-medium bg-white border border-orange-300 text-orange-700">추가 응시 대상</span>
                       )}
                     </td>
-                    <td colSpan={99} className="px-4 py-3 text-xs text-gray-300">—</td>
+                    <td colSpan={99} className="px-4 py-3 text-xs">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setLinkTarget(a) }}
+                        className="rounded border border-indigo-200 bg-white px-2 py-0.5 text-indigo-600 hover:bg-indigo-50"
+                        title="다른 계정으로 로그인해 제출한 경우, 그 제출물을 이 학생으로 연결합니다"
+                      >
+                        🔗 제출물과 연결
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1142,6 +1196,48 @@ export default function AssignmentDashboard() {
       </main>
 
       {focusGuardActive && <LeaveAlerts submissions={submissions} onSelect={focusSubmissionRow} />}
+
+      {linkTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
+          onMouseDown={e => { if (e.target === e.currentTarget) setLinkTarget(null) }}
+        >
+          <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true">
+            <p className="text-sm font-bold text-gray-900">{linkTarget.name || linkTarget.email} — 제출물과 연결</p>
+            <p className="mt-0.5 text-xs text-gray-400">
+              명단 계정: {linkTarget.email}{linkTarget.courseId ? ` · ${courseNameOf(linkTarget.courseId)}` : ''}
+              <br />이 학생이 다른 계정으로 로그인해 제출했다면 그 제출물을 고르세요. 명단과 연결되지 않은 제출물만 보입니다.
+            </p>
+            <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
+              {submissions.filter(s => !roster?.[matchEmailOf(s)]).length === 0 ? (
+                <p className="py-6 text-center text-sm text-gray-400">연결할 수 있는 제출물이 없습니다.</p>
+              ) : (
+                submissions.filter(s => !roster?.[matchEmailOf(s)]).map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleLink(s)}
+                    disabled={linking}
+                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-gray-200 px-3 py-2 text-left hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-40"
+                  >
+                    <span>
+                      <span className="block text-sm font-medium text-gray-800">
+                        {s.studentName || '(이름 없음)'}{s.studentClass ? ` · ${s.studentClass}반` : ''}
+                      </span>
+                      <span className="block text-[11px] text-gray-400 break-all">{s.studentEmail || '(이메일 없음)'}</span>
+                    </span>
+                    <span className="shrink-0 text-xs text-gray-500">
+                      {s.status === 'submitted' ? '제출완료' : '작성중'}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+            <div className="mt-3 flex justify-end">
+              <button onClick={() => setLinkTarget(null)} className="px-3 py-2 text-sm text-gray-500">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {memoTarget && (
         <div

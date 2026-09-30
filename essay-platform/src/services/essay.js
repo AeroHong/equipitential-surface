@@ -279,6 +279,18 @@ export async function clearMakeupExam(assignmentId) {
 
 
 /**
+ * 제출물을 Classroom 명단의 학생(이메일)과 교사가 직접 연결한다 — 학생이 명단과 다른 계정으로
+ * 로그인해 이메일로 자동 매칭이 안 될 때 쓴다. 대시보드는 studentEmail보다 이 값을 먼저 본다.
+ * @param {string} subId
+ * @param {string|null} email null이면 연결 해제
+ */
+export async function linkSubmissionToRoster(subId, email) {
+  await updateDoc(doc(db, 'essaySubmissions', subId), {
+    rosterEmail: email ? email.toLowerCase() : deleteField()
+  })
+}
+
+/**
  * 배정 목록 조회 (최신순)
  * @param {string} [teacherUid] 주면 그 교사가 만든 것만(교사용), 안 주면 전체(super_admin용)
  * @returns {Promise<Array>}
