@@ -25,6 +25,8 @@ import { getExamDeadlineMs, getPausedAtMs } from '../../utils/examTimer.js'
 import { useFocusGuard } from '../../hooks/useFocusGuard.js'
 import { isFocusGuardActive, detectDisplayMode } from '../../utils/focusGuard.js'
 import FocusGuardOverlay from '../../components/FocusGuardOverlay.jsx'
+import ExperimentResultView from '../../components/ExperimentResultView.jsx'
+import { subscribeExperimentResult, buildExperimentUrl, EXPERIMENT_MODES } from '../../services/experiments.js'
 
 export default function EssayWritePage() {
   const { assignmentId } = useParams()
@@ -40,6 +42,9 @@ export default function EssayWritePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // 실험 연결 배정: Motion Tracker가 써 넣는 experimentResults/{aid}__{uid}를 실시간 구독한다.
+  // undefined = 아직 모름(로딩), null = 아직 제출 안 함.
+  const [experimentResult, setExperimentResult] = useState(undefined)
 
   // 클래스룸 연동 없이 개인 구글 계정으로 접속한 경우에만 쓰는 학번·이름 수동 입력 상태.
   const [studentIdInput, setStudentIdInput] = useState('')
@@ -242,6 +247,12 @@ export default function EssayWritePage() {
     }
   }
 
+  const hasExperiment = Boolean(assignment?.experiment)
+  useEffect(() => {
+    if (!hasExperiment || !user) return
+    return subscribeExperimentResult(assignmentId, user.uid, setExperimentResult)
+  }, [hasExperiment, assignmentId, user])
+
   // 내 제출물 실시간 구독 — 교사의 강제 제출·재열기·점수 공개가 새로고침 없이 반영된다.
   // 작성 중인 답안(text/sections 상태)은 건드리지 않고 submission 객체만 갱신한다 — 안 그러면
   // 자동저장 echo가 돌아올 때마다 입력 중인 내용이 덮여 커서가 튄다.
@@ -327,9 +338,17 @@ export default function EssayWritePage() {
   const requiredMissing = usesSections
     ? (template?.sections || []).filter(s => s.required && !htmlToPlainText(sections[s.id]?.text || '').trim())
     : []
-  const canSubmit = usesSections
+  const experimentMissing = hasExperiment && assignment.experiment.required !== false && !experimentResult
+  const canSubmit = !experimentMissing && (usesSections
     ? requiredMissing.length === 0
-    : htmlToPlainText(text).trim().length > 0
+    : htmlToPlainText(text).trim().length > 0)
+
+  // 같은 탭에서 Motion Tracker로 이동한다 — 돌아올 때 return 링크로 이 화면이 다시 열리므로
+  // 떠나기 전에 작성 중인 내용을 바로 저장해둔다.
+  async function handleStartExperiment() {
+    try { await flushNow() } catch { /* 저장 실패해도 이동은 막지 않는다 — 돌아와서 자동저장이 다시 돈다 */ }
+    window.location.href = buildExperimentUrl(assignmentId, assignment.experiment)
+  }
 
   async function handleSubmit() {
     if (usesSections && requiredMissing.length > 0) {
@@ -593,6 +612,15 @@ export default function EssayWritePage() {
                   </div>
                 )}
 
+                {hasExperiment && (
+                  <ExperimentCard
+                    experiment={assignment.experiment}
+                    result={experimentResult}
+                    locked={locked}
+                    onStart={handleStartExperiment}
+                  />
+                )}
+
                 {usesSections ? (
                   <StructuredReportEditor
                     template={template}
@@ -620,9 +648,13 @@ export default function EssayWritePage() {
                     autoResize로 길어지면 버튼도 같이 내려가고, 화면을 넘으면 이 칸 자체가
                     overflow-y-auto로 스크롤되면서 버튼도 함께 스크롤된다. 왼쪽 지문 칸은
                     별도 높이/스크롤을 가진 형제라 이 칸과 독립적으로 스크롤된다. */}
+                {!locked && experimentMissing && (
+                  <p className="mt-3 text-center text-xs text-amber-600">실험 결과를 먼저 제출해야 보고서를 제출할 수 있습니다.</p>
+                )}
                 {!locked && (
                   <button
                     onClick={handleSubmit}
+
                     disabled={submitting || !canSubmit}
                     className="mt-3 flex-shrink-0 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-40 transition-colors active:scale-95"
                   >
@@ -694,6 +726,37 @@ export default function EssayWritePage() {
           )}
         </div>
       </main>
+    </div>
+  )
+}
+
+/** 작성 화면 위쪽의 실험 카드 — 시작/다시 하기 버튼과 제출된 결과 요약. */
+function ExperimentCard({ experiment, result, locked, onStart }) {
+  const modeLabel = EXPERIMENT_MODES[experiment.mode]?.label || '영상 분석'
+  const done = Boolean(result)
+  return (
+    <div className={`flex-shrink-0 mb-3 rounded-xl border p-3 ${done ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50'}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-bold text-gray-800">🎥 실험: {modeLabel}</p>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${done ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+          {result === undefined ? '확인 중...' : done ? '결과 제출됨' : '아직 제출 안 함'}
+        </span>
+        {!locked && (
+          <button
+            type="button"
+            onClick={onStart}
+            className="ml-auto min-h-[44px] rounded-xl bg-indigo-600 px-4 text-sm font-bold text-white hover:bg-indigo-700 active:scale-95"
+          >
+            {done ? '실험 다시 하기' : '실험 시작'}
+          </button>
+        )}
+      </div>
+      {!done && result !== undefined && (
+        <p className="mt-1.5 text-xs text-gray-500">
+          [실험 시작]을 누르면 Motion Tracker가 열립니다. 영상을 분석한 뒤 결과 화면에서 <b>"과제에 결과 제출"</b>을 누르고 이 화면으로 돌아오세요.
+        </p>
+      )}
+      {done && <div className="mt-3"><ExperimentResultView result={result} /></div>}
     </div>
   )
 }

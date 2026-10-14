@@ -5,6 +5,7 @@ import { listPassages, getAssignment, createAssignment, updateAssignment } from 
 import { listTemplates, getTemplateKind, TEMPLATE_KIND_QUESTION_SET } from '../../services/reportTemplates.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, getClassroomErrorMessage } from '../../services/classroom.js'
 import { nowForDatetimeLocal } from '../../utils/datetimeLocal.js'
+import { EXPERIMENT_MODES } from '../../services/experiments.js'
 
 /** <input type="datetime-local">의 min 속성용 — 지금 이 순간을 로컬 시간대 "YYYY-MM-DDTHH:mm"로. */
 export default function AssignmentEditor() {
@@ -30,6 +31,11 @@ export default function AssignmentEditor() {
   const [wordLimit, setWordLimit] = useState('')
   const [timeLimitMinutes, setTimeLimitMinutes] = useState('')
   const [focusGuardEnabled, setFocusGuardEnabled] = useState(true)
+  // 실험 연결(Motion Tracker) — 학생이 작성 화면에서 분석 앱으로 갔다가 돌아오므로 화면 이탈
+  // 감지와는 함께 쓸 수 없다(분석하는 동안이 모두 이탈로 잡힌다). 켜면 저장 시 감지를 끈다.
+  const [experimentEnabled, setExperimentEnabled] = useState(false)
+  const [experimentMode, setExperimentMode] = useState('free')
+  const [experimentRequired, setExperimentRequired] = useState(true)
   const [status, setStatus] = useState('open')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(isEdit || isCopy)
@@ -82,6 +88,11 @@ export default function AssignmentEditor() {
           setWordLimit(assignment.wordLimit ?? '')
           setTimeLimitMinutes(assignment.timeLimitMinutes ?? '')
           setFocusGuardEnabled(assignment.focusGuardEnabled !== false)
+          setExperimentEnabled(Boolean(assignment.experiment))
+          if (assignment.experiment) {
+            setExperimentMode(assignment.experiment.mode || 'free')
+            setExperimentRequired(assignment.experiment.required !== false)
+          }
           if (!isCopy) setStatus(assignment.status || 'open')
         } else if (!isEdit) {
           if (availablePassages.length) setPassageId(availablePassages[0].id)
@@ -152,6 +163,11 @@ export default function AssignmentEditor() {
       }
     }
 
+    const experiment = experimentEnabled
+      ? { tool: 'motion-tracker', mode: experimentMode, required: experimentRequired }
+      : null
+    const effectiveFocusGuard = experimentEnabled ? false : focusGuardEnabled
+
     setSaving(true)
     setClassroomError('')
     try {
@@ -165,7 +181,8 @@ export default function AssignmentEditor() {
           calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
           waitingRoomEnabled,
           timeLimitMinutes: parsedTimeLimit,
-          focusGuardEnabled
+          focusGuardEnabled: effectiveFocusGuard,
+          experiment
         })
         navigate(`/admin/assignments/${assignmentId}`)
         return
@@ -178,7 +195,8 @@ export default function AssignmentEditor() {
         calculatorEnabled: responseType === 'essay_calculator' ? calculatorEnabled : false,
         waitingRoomEnabled,
         timeLimitMinutes: parsedTimeLimit,
-        focusGuardEnabled,
+        focusGuardEnabled: effectiveFocusGuard,
+        experiment,
         title: title.trim(),
         dueAt,
         wordLimit: wordLimit ? Number(wordLimit) : null
@@ -197,7 +215,9 @@ export default function AssignmentEditor() {
             try {
               const result = await createCourseWork(courseId, {
                 title: title.trim(),
-                description: `서술형 수행평가입니다. 아래 링크에서 지문을 읽고 답안을 작성해주세요.\n${linkUrl}`,
+                description: experiment
+                  ? `실험 분석 + 보고서 과제입니다. 아래 링크에서 [실험 시작]으로 영상을 분석한 뒤 보고서를 작성해주세요.\n${linkUrl}`
+                  : `서술형 수행평가입니다. 아래 링크에서 지문을 읽고 답안을 작성해주세요.\n${linkUrl}`,
                 linkUrl,
                 dueDate: dueAt || undefined,
                 scheduledAt: scheduledAt || undefined
@@ -366,6 +386,35 @@ export default function AssignmentEditor() {
           {isEdit && <p className="mt-1.5 text-xs text-gray-400">학생 작성 기록의 일관성을 위해 배정된 지문은 변경할 수 없습니다.</p>}
         </div>
 
+        <div className="rounded-xl border border-gray-200 bg-white p-3.5">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={experimentEnabled}
+              onChange={e => setExperimentEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300"
+            />
+            <span className="text-sm font-bold text-gray-800">🎥 실험 연결 (Motion Tracker 영상 분석)</span>
+          </label>
+          <p className="mt-1.5 text-xs text-gray-400">켜면 학생 작성 화면 위에 [실험 시작] 카드가 생깁니다. 학생이 Motion Tracker에서 분석을 마치고 "과제에 결과 제출"을 누르면 보고서 이미지·측정 데이터·회귀값이 이 배정에 자동으로 붙고, 대시보드에서 실험 완료 여부를 볼 수 있습니다.</p>
+          {experimentEnabled && (
+            <div className="mt-3 space-y-2">
+              <select className={inputClass} value={experimentMode} onChange={e => setExperimentMode(e.target.value)}>
+                {Object.entries(EXPERIMENT_MODES).map(([value, { label }]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={experimentRequired}
+                  onChange={e => setExperimentRequired(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300"
+                />
+                실험 결과를 제출해야 보고서를 제출할 수 있음
+              </label>
+            </div>
+          )}
+        </div>
+
         <div>
           <label className={labelClass}>배정 제목</label>
           <input className={inputClass} value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2학기 서술형 수행평가 — 밀리컨 실험" />
@@ -411,7 +460,10 @@ export default function AssignmentEditor() {
             {' '}학생 화면에 남은 시간이 표시되고, 시간이 끝나면 그때까지 쓴 내용으로 자동 제출됩니다. 진행 중에 바꾸면 학생 화면에 바로 반영됩니다.
           </p>
           {/* 화면 이탈 감지는 제한시간이 있는 평가에서만 작동한다(utils/focusGuard.js). */}
-          {timeLimitMinutes !== '' && (
+          {timeLimitMinutes !== '' && experimentEnabled && (
+            <p className="mt-2 text-xs text-amber-600">실험 연결 과제에서는 화면 이탈 감지를 쓰지 않습니다 — 학생이 분석 앱에 다녀오는 시간이 모두 이탈로 잡히기 때문입니다.</p>
+          )}
+          {timeLimitMinutes !== '' && !experimentEnabled && (
             <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3.5">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input

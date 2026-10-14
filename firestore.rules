@@ -122,6 +122,40 @@ service cloud.firestore {
       }
     }
 
+    // 실험 결과(Motion Tracker 등 외부 분석 앱이 넘겨주는 데이터) — 문서 ID는 제출물과 같은
+    // {assignmentId}__{studentUid}. 학생은 Motion Tracker 안에서 이 프로젝트 계정으로 로그인해
+    // 직접 쓴다(motion-tracking/public/js/essayBridge.js). 보고서를 제출했거나 배정이 마감되면
+    // 실험 결과도 잠긴다 — 제출물과 같은 잠금 규칙을 서버에서 강제한다.
+    match /experimentResults/{id} {
+      allow get: if request.auth != null &&
+        (!exists(/databases/$(database)/documents/experimentResults/$(id)) ||
+          resource.data.studentUid == request.auth.uid || isAdmin() ||
+          (isTeacher() && resource.data.teacherUid == request.auth.uid));
+      // 교사는 where('teacherUid','==',본인uid) 쿼리로만(services/experiments.js)
+      allow list: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
+      allow create: if request.auth != null && validExperimentWrite(id);
+      allow update: if request.auth != null &&
+        ((resource.data.studentUid == request.auth.uid && validExperimentWrite(id)) ||
+          isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
+      allow delete: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
+    }
+
+    // 학생 본인 문서 ID여야 하고, teacherUid를 배정 작성자로 위조할 수 없으며,
+    // 배정이 열려 있고 보고서를 아직 제출하지 않았을 때만 쓸 수 있다.
+    function validExperimentWrite(id) {
+      let data = request.resource.data;
+      let aid = data.assignmentId;
+      let subPath = /databases/$(database)/documents/essaySubmissions/$(id);
+      let assignment = get(/databases/$(database)/documents/essayAssignments/$(aid)).data;
+      return data.studentUid == request.auth.uid &&
+        id == aid + '__' + request.auth.uid &&
+        data.teacherUid == assignment.createdBy &&
+        assignment.status != 'closed' &&
+        (!exists(subPath) || get(subPath).data.status != 'submitted');
+    }
+
     function isAdmin() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
     }

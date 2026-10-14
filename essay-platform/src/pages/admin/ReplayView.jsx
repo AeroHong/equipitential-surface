@@ -6,6 +6,8 @@ import { getTemplate } from '../../services/reportTemplates.js'
 import { sanitizeAnswerHtml, sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
 import { renderMathInElement } from '../../utils/mathExpression.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
+import ExperimentResultView from '../../components/ExperimentResultView.jsx'
+import { subscribeExperimentResult } from '../../services/experiments.js'
 
 const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:table-fixed [&_table]:mx-auto [&_table]:max-w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline'
 
@@ -237,6 +239,13 @@ export default function ReplayView() {
   const [error, setError] = useState('')
   const [exportingDocx, setExportingDocx] = useState(false)
   const [focusEvents, setFocusEvents] = useState(null)
+  // 실험 연결 배정이면 이 학생의 실험 결과도 함께 보여준다(채점 근거).
+  const [experimentResult, setExperimentResult] = useState(undefined)
+  const hasExperiment = Boolean(assignment?.experiment)
+  useEffect(() => {
+    if (!hasExperiment) return
+    return subscribeExperimentResult(assignmentId, uid, setExperimentResult)
+  }, [hasExperiment, assignmentId, uid])
 
   useEffect(() => {
     const subId = `${assignmentId}__${uid}`
@@ -378,8 +387,21 @@ export default function ReplayView() {
                   </button>
                 </div>
               </div>
+              {hasExperiment && (
+                <div className="mb-4 bg-white rounded-2xl border border-gray-200 p-5 print:border-0 print:p-0">
+                  <h2 className="text-sm font-bold text-gray-700 mb-3">🎥 실험 결과</h2>
+                  {experimentResult === undefined ? (
+                    <p className="text-sm text-gray-300">불러오는 중...</p>
+                  ) : experimentResult ? (
+                    <ExperimentResultView result={experimentResult} />
+                  ) : (
+                    <p className="text-sm text-gray-400">아직 실험 결과를 제출하지 않았습니다.</p>
+                  )}
+                </div>
+              )}
               <div className="bg-white rounded-2xl border border-gray-200 p-5 print:border-0 print:p-0">
-                <FullAnswerView usesSections={usesSections} template={template} submission={submission} />
+                <FullAnswerView
+ usesSections={usesSections} template={template} submission={submission} />
               </div>
               {isGradable && <GradingPanel template={template} submission={submission} onSaved={handleGradingSaved} />}
               <FocusEventsPanel submission={submission} events={focusEvents} />

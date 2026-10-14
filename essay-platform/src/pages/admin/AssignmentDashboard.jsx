@@ -14,13 +14,26 @@ import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
 import ExamTimer from '../../components/ExamTimer.jsx'
 import LeaveAlerts from '../../components/LeaveAlerts.jsx'
 import { isFocusGuardActive, formatDuration } from '../../utils/focusGuard.js'
+import ExperimentResultView from '../../components/ExperimentResultView.jsx'
+import { subscribeExperimentResults, formatFitValue } from '../../services/experiments.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, courseWorkExists, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
 
 /** handlePublishToClassroom과 반드시 같은 문구를 써야 한다 — "설명 동기화" 버튼이
  * 이미 게시된 과제를 이 문구로 덮어쓰기 때문. */
-function buildCourseWorkDescription(assignmentId) {
+function buildCourseWorkDescription(assignmentId, assignment) {
   const linkUrl = `${window.location.origin}/write/${assignmentId}`
+  // AssignmentEditor의 최초 게시 문구와 같게 유지한다.
+  if (assignment?.experiment) {
+    return `실험 분석 + 보고서 과제입니다. 아래 링크에서 [실험 시작]으로 영상을 분석한 뒤 보고서를 작성해주세요.\n${linkUrl}`
+  }
   return `서술형 수행평가입니다. 아래 링크에서 지문을 읽고 답안을 작성해주세요.\n${linkUrl}`
+}
+
+/** 마감일(dueAt) 이후에 제출했으면 지각 — dueAt은 학생 화면에서 막지 않으므로 여기서 표시만 한다. */
+function isLateSubmission(sub, assignment) {
+  const due = assignment?.dueAt?.toDate?.()
+  const submitted = sub.submittedAt?.toDate?.()
+  return Boolean(due && submitted && submitted > due)
 }
 
 // 필터 탭에서 "명단에서 못 찾은 학생"을 고르는 값 — 실제 courseId와 절대 안 겹치게 접두사를 둠.
@@ -144,6 +157,15 @@ export default function AssignmentDashboard() {
     })
     return () => unsub()
   }, [assignmentId])
+
+  // 실험 결과(Motion Tracker) — 실험 연결 배정에서만 구독한다. {studentUid: result}
+  const [experimentResults, setExperimentResults] = useState({})
+  const [experimentTarget, setExperimentTarget] = useState(null) // 결과 모달을 연 {sub, result}
+  const hasExperiment = Boolean(assignment?.experiment)
+  useEffect(() => {
+    if (!hasExperiment || !assignmentId || !user) return
+    return subscribeExperimentResults(assignmentId, setExperimentResults, user.uid)
+  }, [hasExperiment, assignmentId, user])
 
   // 교사 메모 — 학생은 못 읽는 별도 컬렉션(essayTeacherMemos). {제출물 ID: 메모}
   const [memos, setMemos] = useState({})
@@ -428,7 +450,7 @@ export default function AssignmentDashboard() {
         try {
           const result = await createCourseWork(courseId, {
             title: assignment.title,
-            description: buildCourseWorkDescription(assignmentId),
+            description: buildCourseWorkDescription(assignmentId, assignment),
             linkUrl,
             dueDate,
             scheduledAt: scheduledAt || undefined
@@ -475,7 +497,8 @@ export default function AssignmentDashboard() {
     setSyncingFor(courseId)
     try {
       if (!isClassroomConnected()) await signInToClassroom()
-      await updateCourseWorkDescription(courseId, courseWorkId, buildCourseWorkDescription(assignmentId))
+      await updateCourseWorkDescription(courseId, courseWorkId, buildCourseWorkDescription(assignmentId, assignment))
+
       window.alert('Classroom에 게시된 설명을 최신 문구로 갱신했습니다.')
     } catch (err) {
       console.error('설명 동기화 실패:', err)
@@ -580,6 +603,8 @@ export default function AssignmentDashboard() {
   // 대기실 단계엔 아직 제출물 문서가 없으므로(평가 시작 후에 만든다) 접속 인원은 presence로 센다.
   const waitingCount = Object.values(presenceMap).filter(p => p?.state && p.state !== 'offline').length
   const submittedCount = filteredSubmissions.filter(s => s.status === 'submitted').length
+  const experimentDoneCount = filteredSubmissions.filter(s => experimentResults[s.studentUid]).length
+  const lateCount = filteredSubmissions.filter(s => isLateSubmission(s, assignment)).length
 
   const isStructured = assignment?.responseType === 'structured'
   const isGradable = assignment?.responseType === 'essay_calculator'
@@ -694,6 +719,10 @@ export default function AssignmentDashboard() {
             )
           )}
           <span className="text-xs text-gray-500">제출 {submittedCount} / {filteredSubmissions.length}</span>
+          {hasExperiment && (
+            <span className="text-xs text-emerald-700">실험 완료 {experimentDoneCount} / {filteredSubmissions.length}</span>
+          )}
+          {lateCount > 0 && <span className="text-xs font-medium text-rose-600">지각 {lateCount}명</span>}
           {roster && absenceMeaningful && (
             <span className={`text-xs ${filteredAbsent.length > 0 ? 'font-medium text-orange-600' : 'text-gray-400'}`}>미참여 {filteredAbsent.length}명</span>
           )}
@@ -1010,6 +1039,7 @@ export default function AssignmentDashboard() {
                   <th className="px-4 py-3 font-medium">상태</th>
                   <th className="px-4 py-3 font-medium">접속</th>
                   {showLeaveColumn && <th className="px-4 py-3 font-medium">화면 이탈</th>}
+                  {hasExperiment && <th className="px-4 py-3 font-medium">실험</th>}
                   <th className="px-4 py-3 font-medium">{usesSections ? '완료 섹션' : '글자수'}</th>
                   {isGradable && <th className="px-4 py-3 font-medium">점수</th>}
                   <th className="px-4 py-3 font-medium">마지막 저장</th>
@@ -1081,7 +1111,11 @@ export default function AssignmentDashboard() {
                             ? (sub.forceSubmitted ? '강제 제출' : sub.autoSubmitted ? '시간종료 제출' : '제출완료')
                             : '작성중'}
                         </span>
+                        {isLateSubmission(sub, assignment) && (
+                          <span className="ml-1 text-xs rounded-full px-2 py-0.5 font-medium bg-rose-100 text-rose-700" title={`제출 ${formatTime(sub.submittedAt)}`}>지각</span>
+                        )}
                       </td>
+
                       <td className="px-4 py-3">
                         {sub.status === 'submitted' ? (
                           <span className="text-xs text-gray-300">—</span>
@@ -1097,6 +1131,24 @@ export default function AssignmentDashboard() {
                             </span>
                           ) : (
                             <span className="text-gray-300">0회</span>
+                          )}
+                        </td>
+                      )}
+                      {hasExperiment && (
+                        <td className="px-4 py-3 text-xs">
+                          {experimentResults[sub.studentUid] ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setExperimentTarget({ sub, result: experimentResults[sub.studentUid] }) }}
+                              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-left text-emerald-700 hover:bg-emerald-100"
+                              title="실험 결과 보기"
+                            >
+                              <span className="block font-medium">✓ {formatTime(experimentResults[sub.studentUid].updatedAt)}</span>
+                              <span className="block tabular-nums text-emerald-600">
+                                {(experimentResults[sub.studentUid].points || []).length}점 · a {formatFitValue(experimentResults[sub.studentUid].fit?.ay, 0)}
+                              </span>
+                            </button>
+                          ) : (
+                            <span className="text-gray-300">미제출</span>
                           )}
                         </td>
                       )}
@@ -1239,7 +1291,23 @@ export default function AssignmentDashboard() {
         </div>
       )}
 
+      {experimentTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
+          onMouseDown={e => { if (e.target === e.currentTarget) setExperimentTarget(null) }}
+        >
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-gray-900">{experimentTarget.sub.studentName || '(이름 없음)'} — 실험 결과</p>
+              <button onClick={() => setExperimentTarget(null)} className="text-xl text-slate-400 hover:text-slate-700" aria-label="닫기">×</button>
+            </div>
+            <ExperimentResultView result={experimentTarget.result} showTable />
+          </div>
+        </div>
+      )}
+
       {memoTarget && (
+
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
           onMouseDown={e => { if (e.target === e.currentTarget) setMemoTarget(null) }}

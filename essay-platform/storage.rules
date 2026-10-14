@@ -39,5 +39,25 @@ service firebase.storage {
         request.resource.size < 20 * 1024 * 1024 &&
         request.resource.contentType.matches('image/.*');
     }
+
+    // 실험 결과 보고서 PNG — Motion Tracker가 학생 본인 uid 경로에 올린다
+    // (firestore.rules의 experimentResults와 짝). 다시 제출하면 같은 경로를 덮어쓴다.
+    match /experimentResults/{uid}/{aid}/{file} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType == 'image/png' &&
+        experimentOpen(aid, uid);
+    }
+
+    // firestore.rules의 validExperimentWrite와 같은 잠금 — 보고서를 제출했거나 배정이
+    // 마감되면 이미 올라간 PNG도 바꿀 수 없다.
+    function experimentOpen(aid, uid) {
+      let subId = aid + '__' + uid;
+      return firestore.get(/databases/(default)/documents/essayAssignments/$(aid)).data.status != 'closed' &&
+        (!firestore.exists(/databases/(default)/documents/essaySubmissions/$(subId)) ||
+          firestore.get(/databases/(default)/documents/essaySubmissions/$(subId)).data.status != 'submitted');
+    }
+
   }
 }

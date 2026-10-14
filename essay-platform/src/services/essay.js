@@ -145,6 +145,9 @@ export async function createAssignment(data) {
     timeLimitMinutes: data.timeLimitMinutes || null,
     // 화면 이탈 감지 — 제한시간이 있는 배정에서만 의미가 있다(utils/focusGuard.js의 isFocusGuardActive).
     focusGuardEnabled: data.focusGuardEnabled !== false,
+    // 실험 연결 — {tool:'motion-tracker', mode:'free', required} 또는 null.
+    // 학생 작성 화면에 실험 카드를 띄우고 대시보드에 실험 열을 추가한다(services/experiments.js).
+    experiment: data.experiment || null,
     title: data.title || '',
     dueAt: data.dueAt || null,
     wordLimit: data.wordLimit || null,
