@@ -27,10 +27,12 @@ export default function ExperimentResultView({ result, showTable = false }) {
         </a>
       )}
 
-      <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
         <Stat label="측정 점" value={`${points.length}개`} />
         <Stat label={`vx (${unit}/s)`} value={formatFitValue(fit?.vx, 2)} sub={fit?.vxR2 != null ? `R² ${formatFitValue(fit.vxR2, 3)}` : null} />
         <Stat label={`가속도 a (${unit}/s²)`} value={formatFitValue(fit?.ay, 1)} sub={fit?.ayR2 != null ? `R² ${formatFitValue(fit.ayR2, 3)}` : null} />
+        {fit?.v0 != null && <Stat label={`초기 속력 v₀ (${unit}/s)`} value={formatFitValue(fit.v0, 1)} />}
+        {fit?.angleDeg != null && <Stat label="발사 각도 θ" value={`${formatFitValue(fit.angleDeg, 1)}°`} sub="수평 기준, 위쪽 +" />}
         <Stat label="보정" value={result.calib ? `${formatFitValue(result.calib.realLengthCm, 1)}cm` : '없음'} sub={result.fps ? `${result.fps}fps` : null} />
       </dl>
       {!fit && <p className="text-xs text-amber-600">점이 4개 미만이라 회귀 분석값이 없습니다.</p>}
