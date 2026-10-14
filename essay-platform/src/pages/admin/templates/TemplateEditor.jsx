@@ -8,7 +8,7 @@ function makeSectionId() {
 }
 
 function emptySection() {
-  return { id: makeSectionId(), groupLabel: '', heading: '', guidance: '', required: true, wordLimitGuide: null, maxScore: null }
+  return { id: makeSectionId(), type: 'text', groupLabel: '', heading: '', guidance: '', required: true, wordLimitGuide: null, maxScore: null }
 }
 
 const emptyForm = { title: '', description: '', sections: [emptySection()] }
@@ -79,6 +79,8 @@ export default function TemplateEditor() {
       .filter(s => s.heading.trim() || s.groupLabel.trim())
       .map(s => ({
         id: s.id,
+        // 'experiment': 학생이 Motion Tracker에서 제출한 실험 결과가 자동으로 들어가는 섹션 (입력란 없음)
+        type: s.type === 'experiment' ? 'experiment' : 'text',
         groupLabel: s.groupLabel.trim(),
         heading: s.heading.trim(),
         guidance: s.guidance.trim(),
@@ -168,6 +170,28 @@ export default function TemplateEditor() {
                   </div>
                 </div>
 
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-gray-400">섹션 종류</span>
+                  {[['text', '✍ 서술 입력'], ['experiment', '🎥 실험 결과 (자동 삽입)']].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSection(idx, { type: value })}
+                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                        (s.type || 'text') === value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {s.type === 'experiment' && (
+                  <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
+                    학생이 Motion Tracker에서 "과제에 결과 제출"을 하면 이 자리에 실험 보고서(궤적·그래프·회귀·데이터표, 학생이 정한 배치 그대로)가 자동으로 들어갑니다.
+                    배정에서 "🎥 실험 연결"을 켜야 동작합니다.
+                  </p>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">그룹 라벨 (선택, 예: "Ⅰ. 탐구 주제" — 연속되면 화면에서 묶여 보입니다)</label>
@@ -184,7 +208,7 @@ export default function TemplateEditor() {
                   <textarea className={`${inputClass} resize-none`} rows={2} value={s.guidance} onChange={e => setSection(idx, { guidance: e.target.value })} placeholder="예: 내가 탐구하고 싶은 주제를 한 문장으로 표현한다." />
                 </div>
 
-                <div className="flex flex-wrap items-center gap-4">
+                {s.type !== 'experiment' && <div className="flex flex-wrap items-center gap-4">
                   <label className="flex items-center gap-1.5 text-xs text-gray-600">
                     <input type="checkbox" checked={s.required} onChange={e => setSection(idx, { required: e.target.checked })} />
                     필수 항목
@@ -209,7 +233,7 @@ export default function TemplateEditor() {
                       placeholder="예: 10"
                     />
                   </div>
-                </div>
+                </div>}
               </div>
             ))}
           </div>

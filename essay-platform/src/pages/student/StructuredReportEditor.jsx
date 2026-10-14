@@ -3,6 +3,7 @@ import EssayEditor from '../../components/EssayEditor.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { linkifyText } from '../../utils/linkifyText.js'
 import { sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
+import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
 
 function scrollToSection(id) {
   document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -14,7 +15,7 @@ function scrollToSection(id) {
  * 놓치지 않고 다 채우게 하는 것). 입력 위젯 자체는 자유서술과 같은 EssayEditor를 섹션마다
  * 하나씩 재사용한다 — 붙여넣기/타이핑 로깅도 그대로 따라오고, sectionId만 얹어 보낸다.
  */
-export default function StructuredReportEditor({ template, sections, onChange, disabled, logInput, logKeydown, logPaste, scores }) {
+export default function StructuredReportEditor({ template, sections, onChange, disabled, logInput, logKeydown, logPaste, scores, experimentResult }) {
   if (!template) return null
 
   function updateSection(id, patch) {
@@ -44,7 +45,9 @@ export default function StructuredReportEditor({ template, sections, onChange, d
       {/* 진행 상황 칩 — 초록(작성됨)/회색(미작성), 클릭하면 그 섹션으로 스크롤 */}
       <div className="flex flex-wrap gap-1.5 mb-5 sticky top-0 bg-gray-50 py-2 z-10 -mx-1 px-1">
         {template.sections.map(sec => {
-          const filled = htmlToPlainText(sections[sec.id]?.text || '').trim().length > 0
+          const filled = sec.type === 'experiment'
+            ? Boolean(experimentResult)
+            : htmlToPlainText(sections[sec.id]?.text || '').trim().length > 0
           return (
             <button
               key={sec.id}
@@ -94,7 +97,14 @@ export default function StructuredReportEditor({ template, sections, onChange, d
                     dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(sec.promptHtml) }}
                   />
                 )}
-                <div className="min-h-[180px]">
+                {sec.type === 'experiment' ? (
+                  // 실험 결과 섹션: 입력란 대신 Motion Tracker에서 제출한 보고서가 자동으로 들어간다
+                  experimentResult
+                    ? <div className="rounded-xl border border-gray-200 bg-white p-3"><ExperimentReport result={experimentResult} /></div>
+                    : <p className="rounded-xl border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-sm text-gray-400">
+                        위의 [실험 시작]으로 영상을 분석하고 "과제에 결과 제출"을 누르면 여기에 실험 보고서가 자동으로 들어갑니다.
+                      </p>
+                ) : <div className="min-h-[180px]">
                   <EssayEditor
                     value={answer.text || ''}
                     onChange={html => updateSection(sec.id, { text: html, charCount: htmlToPlainText(html).length })}
@@ -105,7 +115,7 @@ export default function StructuredReportEditor({ template, sections, onChange, d
                     onLogPaste={entry => logPaste?.({ ...entry, sectionId: sec.id })}
                     placeholder="여기에 작성하세요…"
                   />
-                </div>
+                </div>}
               </div>
             </React.Fragment>
           )

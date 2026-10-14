@@ -6,7 +6,7 @@ import { getTemplate } from '../../services/reportTemplates.js'
 import { sanitizeAnswerHtml, sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
 import { renderMathInElement } from '../../utils/mathExpression.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
-import ExperimentResultView from '../../components/ExperimentResultView.jsx'
+import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
 import { subscribeExperimentResult } from '../../services/experiments.js'
 
 const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:table-fixed [&_table]:mx-auto [&_table]:max-w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline'
@@ -15,7 +15,7 @@ const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-
 const ALL_SECTIONS = '__all__'
 
 /** 왼쪽 패널 — 로그 재생과 무관하게, 지금까지 저장된 최종 답안 전체를 한 번에 보여준다. */
-function FullAnswerView({ usesSections, template, submission }) {
+function FullAnswerView({ usesSections, template, submission, experimentResult }) {
   // dangerouslySetInnerHTML로 넣은 data-math span은 저장된 그대로(평문 LaTeX 폴백)라 KaTeX로
   // 다시 그려주지 않으면 수식이 아니라 LaTeX 구문 그대로 보인다 — 렌더 뒤에 한 번 그려준다.
   const rootRef = useRef(null)
@@ -44,7 +44,11 @@ function FullAnswerView({ usesSections, template, submission }) {
                     <div className="passage-rich mt-2 text-sm text-gray-700" dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(sec.promptHtml) }} />
                   </details>
                 )}
-                {html ? <div className={ANSWER_HTML_CLASS} dangerouslySetInnerHTML={{ __html: html }} /> : <p className="text-sm text-gray-300">(작성 내용 없음)</p>}
+                {sec.type === 'experiment'
+                  ? (experimentResult
+                    ? <ExperimentReport result={experimentResult} />
+                    : <p className="text-sm text-gray-300">(실험 결과 미제출)</p>)
+                  : html ? <div className={ANSWER_HTML_CLASS} dangerouslySetInnerHTML={{ __html: html }} /> : <p className="text-sm text-gray-300">(작성 내용 없음)</p>}
               </div>
             </React.Fragment>
           )
@@ -324,7 +328,10 @@ export default function ReplayView() {
         ? (template?.sections || []).map(sec => ({
           groupLabel: sec.groupLabel,
           heading: sec.heading,
-          html: submission?.sections?.[sec.id]?.text || ''
+          // 실험 결과 섹션은 제출된 보고서 PNG(학생이 정한 배치 그대로)를 그림으로 넣는다
+          html: sec.type === 'experiment'
+            ? (experimentResult?.pngUrl ? `<p><img src="${experimentResult.pngUrl}" alt="실험 보고서"></p>` : '<p>(실험 결과 미제출)</p>')
+            : submission?.sections?.[sec.id]?.text || ''
         }))
         : [{ html: submission?.text || '' }]
       await exportAnswerToDocx({ title: assignment?.title, studentName: submission?.studentName, sections })
@@ -393,7 +400,7 @@ export default function ReplayView() {
                   {experimentResult === undefined ? (
                     <p className="text-sm text-gray-300">불러오는 중...</p>
                   ) : experimentResult ? (
-                    <ExperimentResultView result={experimentResult} />
+                    <ExperimentReport result={experimentResult} />
                   ) : (
                     <p className="text-sm text-gray-400">아직 실험 결과를 제출하지 않았습니다.</p>
                   )}
@@ -401,7 +408,7 @@ export default function ReplayView() {
               )}
               <div className="bg-white rounded-2xl border border-gray-200 p-5 print:border-0 print:p-0">
                 <FullAnswerView
- usesSections={usesSections} template={template} submission={submission} />
+ usesSections={usesSections} template={template} submission={submission} experimentResult={experimentResult} />
               </div>
               {isGradable && <GradingPanel template={template} submission={submission} onSaved={handleGradingSaved} />}
               <FocusEventsPanel submission={submission} events={focusEvents} />

@@ -25,7 +25,7 @@ import { getExamDeadlineMs, getPausedAtMs } from '../../utils/examTimer.js'
 import { useFocusGuard } from '../../hooks/useFocusGuard.js'
 import { isFocusGuardActive, detectDisplayMode } from '../../utils/focusGuard.js'
 import FocusGuardOverlay from '../../components/FocusGuardOverlay.jsx'
-import ExperimentResultView from '../../components/ExperimentResultView.jsx'
+import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
 import { subscribeExperimentResult, buildExperimentUrl, EXPERIMENT_MODES } from '../../services/experiments.js'
 
 export default function EssayWritePage() {
@@ -336,7 +336,8 @@ export default function EssayWritePage() {
   }
 
   const requiredMissing = usesSections
-    ? (template?.sections || []).filter(s => s.required && !htmlToPlainText(sections[s.id]?.text || '').trim())
+    // 실험 결과 섹션은 글을 쓰는 칸이 아니라 제외 — 실험 제출 여부는 experimentMissing이 따로 본다
+    ? (template?.sections || []).filter(s => s.type !== 'experiment' && s.required && !htmlToPlainText(sections[s.id]?.text || '').trim())
     : []
   const experimentMissing = hasExperiment && assignment.experiment.required !== false && !experimentResult
   const canSubmit = !experimentMissing && (usesSections
@@ -618,6 +619,7 @@ export default function EssayWritePage() {
                     result={experimentResult}
                     locked={locked}
                     onStart={handleStartExperiment}
+                    inReport={usesSections && (template?.sections || []).some(s => s.type === 'experiment')}
                   />
                 )}
 
@@ -631,6 +633,7 @@ export default function EssayWritePage() {
                     logKeydown={handleLogKeydown}
                     logPaste={logPaste}
                     scores={sectionScores}
+                    experimentResult={experimentResult}
                   />
                 ) : (
                   <EssayEditor
@@ -731,7 +734,7 @@ export default function EssayWritePage() {
 }
 
 /** 작성 화면 위쪽의 실험 카드 — 시작/다시 하기 버튼과 제출된 결과 요약. */
-function ExperimentCard({ experiment, result, locked, onStart }) {
+function ExperimentCard({ experiment, result, locked, onStart, inReport = false }) {
   const modeLabel = EXPERIMENT_MODES[experiment.mode]?.label || '영상 분석'
   const done = Boolean(result)
   return (
@@ -756,7 +759,10 @@ function ExperimentCard({ experiment, result, locked, onStart }) {
           [실험 시작]을 누르면 Motion Tracker가 열립니다. 영상을 분석한 뒤 결과 화면에서 <b>"과제에 결과 제출"</b>을 누르고 이 화면으로 돌아오세요.
         </p>
       )}
-      {done && <div className="mt-3"><ExperimentResultView result={result} /></div>}
+      {/* 양식에 '실험 결과' 섹션이 있으면 보고서는 그 섹션에 들어가므로 여기서는 안내만 */}
+      {done && (inReport
+        ? <p className="mt-1.5 text-xs text-emerald-700">실험 보고서가 아래 "실험 결과" 섹션에 들어갔습니다. 다시 제출하면 최신 결과로 바뀝니다.</p>
+        : <div className="mt-3"><ExperimentReport result={result} /></div>)}
     </div>
   )
 }

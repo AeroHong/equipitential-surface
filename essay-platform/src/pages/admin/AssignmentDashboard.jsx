@@ -14,7 +14,7 @@ import { useServerTimeOffset } from '../../hooks/useServerTimeOffset.js'
 import ExamTimer from '../../components/ExamTimer.jsx'
 import LeaveAlerts from '../../components/LeaveAlerts.jsx'
 import { isFocusGuardActive, formatDuration } from '../../utils/focusGuard.js'
-import ExperimentResultView from '../../components/ExperimentResultView.jsx'
+import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
 import { subscribeExperimentResults, formatFitValue } from '../../services/experiments.js'
 import { hasClassroomConfig, signInToClassroom, listMyCourses, createCourseWork, updateCourseWorkDescription, courseWorkExists, getClassroomErrorMessage, getCourseStudentCount, listCourseStudents, isClassroomConnected } from '../../services/classroom.js'
 
@@ -625,7 +625,8 @@ export default function AssignmentDashboard() {
   // sections 기반 제출물은 붙여넣기/AI 신호가 섹션별로 쌓이므로(services/essay.js의
   // sections.{id}.* dot-path 증가) 대시보드 표시용으로 섹션들을 합산해서 보여준다.
   function sectionCompletion(sub) {
-    const secs = template?.sections || []
+    // 실험 결과 섹션은 글을 쓰는 칸이 아니라 작성 진행도에서 뺀다 (실험 열에서 따로 보여줌)
+    const secs = (template?.sections || []).filter(s => s.type !== 'experiment')
     if (!secs.length) return null
     const done = secs.filter(s => htmlToPlainText(sub.sections?.[s.id]?.text || '').trim().length > 0).length
     return { done, total: secs.length }
@@ -1296,12 +1297,12 @@ export default function AssignmentDashboard() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
           onMouseDown={e => { if (e.target === e.currentTarget) setExperimentTarget(null) }}
         >
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true">
+          <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-bold text-gray-900">{experimentTarget.sub.studentName || '(이름 없음)'} — 실험 결과</p>
               <button onClick={() => setExperimentTarget(null)} className="text-xl text-slate-400 hover:text-slate-700" aria-label="닫기">×</button>
             </div>
-            <ExperimentResultView result={experimentTarget.result} showTable />
+            <ExperimentReport result={experimentTarget.result} />
           </div>
         </div>
       )}
