@@ -216,12 +216,19 @@ export default function EssayEditor({
     }
   }, [value])
 
+  // commit은 insertImage(useCallback)·드래그 핸들러처럼 예전 렌더에서 만들어진 함수 안에서도
+  // 불린다 — 그 렌더의 onChange를 그대로 쓰면 부모의 옛 상태로 저장되므로 항상 최신 것을 쓴다.
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const onLogInputRef = useRef(onLogInput)
+  onLogInputRef.current = onLogInput
+
   function commit(inputType) {
     const el = editorRef.current
     if (!el) return
     const html = toStorageHtml(el)
-    onChange(html)
-    onLogInput?.({
+    onChangeRef.current(html)
+    onLogInputRef.current?.({
       value: html,
       selStart: getCaretOffset(el),
       inputType

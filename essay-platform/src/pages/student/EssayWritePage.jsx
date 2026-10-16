@@ -274,8 +274,14 @@ export default function EssayWritePage() {
   }, [deadlineMs, timeUp, serverOffsetMs])
 
   const locked = submission?.status === 'submitted' || assignment?.status === 'closed' || timeUp
+  // 교사가 강제 제출하는 등 잠긴 뒤엔 남은 자동저장을 버린다 — 규칙에 막혀 실패하면
+  // useAutosave가 계속 재시도하고, 페이지를 떠날 때마다 "저장 중" 확인창이 뜨게 된다.
+  // (잠기기 직전까지 쓴 내용은 제출(submitNow)이 직접 함께 저장한다.)
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
 
   const { saveState, trigger, flushNow } = useAutosave(async (value) => {
+    if (lockedRef.current) return
     if (usesSections) {
       const withAiFlags = Object.fromEntries(
         Object.entries(value).map(([id, ans]) => [id, { ...ans, aiFlags: scanText(htmlToPlainText(ans.text || '')) }])
@@ -347,7 +353,9 @@ export default function EssayWritePage() {
   // 같은 탭에서 Motion Tracker로 이동한다 — 돌아올 때 return 링크로 이 화면이 다시 열리므로
   // 떠나기 전에 작성 중인 내용을 바로 저장해둔다.
   async function handleStartExperiment() {
-    try { await flushNow() } catch { /* 저장 실패해도 이동은 막지 않는다 — 돌아와서 자동저장이 다시 돈다 */ }
+    // flushNow는 이미 서버로 보내는 중인 저장까지 기다린다(useAutosave.js). 실패해도 이동은
+    // 막지 않는다 — 브라우저 로컬 캐시(firebase.js)에 남은 쓰기가 돌아와서 다시 전송된다.
+    try { await flushNow() } catch { /* 위 주석 참고 */ }
     window.location.href = buildExperimentUrl(assignmentId, assignment.experiment)
   }
 

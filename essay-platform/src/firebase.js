@@ -1,7 +1,7 @@
 // physlab과 동일한 Firebase 프로젝트를 공유한다(Firestore의 users 컬렉션, 로그인 계정을 그대로 재사용하기 위함).
 import { initializeApp } from 'firebase/app'
 import { getAuth, GoogleAuthProvider } from 'firebase/auth'
-import { getFirestore } from 'firebase/firestore'
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
 import { getDatabase } from 'firebase/database'
 
@@ -24,7 +24,13 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig)
 
 export const auth = getAuth(app)
-export const db = getFirestore(app)
+// IndexedDB 영속 캐시 — 아직 서버 확인을 못 받은 쓰기(자동저장)가 메모리에만 있으면 탭을
+// 닫거나 새로고침하는 순간 사라졌다. 영속 캐시에선 쓰기가 로컬에 먼저 기록되고, 다시 접속하면
+// 같은 계정으로 자동 재전송되며, 그사이 불러오기(getDoc)에도 로컬 변경분이 반영된다.
+// 여러 탭을 동시에 열어도 동작하도록 multi-tab 관리자를 쓴다(학생 기기는 모두 개인 기기).
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+})
 export const storage = getStorage(app)
 export const googleProvider = new GoogleAuthProvider()
 // databaseURL이 아직 설정되지 않은 환경(RTDB 미생성)에서는 getDatabase()가 즉시 던지므로,

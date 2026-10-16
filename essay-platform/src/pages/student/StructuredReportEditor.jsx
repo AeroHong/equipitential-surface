@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import EssayEditor from '../../components/EssayEditor.jsx'
 import { htmlToPlainText } from '../../utils/richText.js'
 import { linkifyText } from '../../utils/linkifyText.js'
@@ -16,11 +16,21 @@ function scrollToSection(id) {
  * 하나씩 재사용한다 — 붙여넣기/타이핑 로깅도 그대로 따라오고, sectionId만 얹어 보낸다.
  */
 export default function StructuredReportEditor({ template, sections, onChange, disabled, logInput, logKeydown, logPaste, scores, experimentResult }) {
+  // 최신 섹션 묶음을 ref로 읽는다 — 이미지 업로드처럼 await 뒤에 도착하는 onChange는 예전
+  // 렌더의 sections를 붙잡고 있어서, 그대로 펼치면 그사이 다른 문항에 쓴 내용이 옛 값으로
+  // 되돌아간 채 자동저장됐다("쓰다가 날아갔어요"). 같은 틱에 두 번 바뀌어도 앞의 변경이
+  // 살아남도록 다음 렌더를 기다리지 않고 ref를 바로 갱신한다.
+  const sectionsRef = useRef(sections)
+  sectionsRef.current = sections
+
   if (!template) return null
 
   function updateSection(id, patch) {
-    const current = sections[id] || { text: '', charCount: 0 }
-    onChange({ ...sections, [id]: { ...current, ...patch } })
+    const latest = sectionsRef.current || {}
+    const current = latest[id] || { text: '', charCount: 0 }
+    const next = { ...latest, [id]: { ...current, ...patch } }
+    sectionsRef.current = next
+    onChange(next)
   }
 
   let lastGroup = null
