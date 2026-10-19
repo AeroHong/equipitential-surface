@@ -7,7 +7,10 @@ import { getDatabase } from 'firebase/database'
 
 const firebaseConfig = {
   apiKey: "AIzaSyAKp3ooZkJPJE-SZrL6srfmmuWIFafAayY",
-  authDomain: "equipotential-surface.firebaseapp.com",
+  // 학교망이 *.firebaseapp.com을 막는 경우가 있어 로그인 창을 essay 호스팅 주소에서 연다.
+  // (Google Cloud 'Web client (auto created by Google Service)'에
+  //  https://essay-hck.web.app/__/auth/handler 가 리디렉션 URI로 등록되어 있어야 한다)
+  authDomain: "essay-hck.web.app",
   projectId: "equipotential-surface",
   storageBucket: "equipotential-surface.firebasestorage.app",
   messagingSenderId: "60344638100",
