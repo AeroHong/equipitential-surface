@@ -676,7 +676,13 @@ export default function AssignmentDashboard() {
           <p className="text-xs text-gray-500">{passage?.title || (isStructured ? template?.title : '')}</p>
         </div>
         <div className="ml-auto flex items-center gap-3">
-          {assignment?.waitingRoomEnabled && (
+          {/* 마감한 배정은 진행 표시·남은 시간·일시정지/시작 버튼을 모두 숨기고 마감 표시만 한다 —
+              예전엔 waitingRoomEnabled만 봐서 마감 후에도 "평가 진행 중 · 시간 종료 · 일시정지"가 남았다.
+              "마감 해제"(추가 응시 포함)로 다시 열면 아래 진행 표시가 그대로 돌아온다. */}
+          {assignment?.status === 'closed' && (
+            <span className="text-xs bg-gray-200 text-gray-700 rounded-full px-3 py-1 font-medium">🔒 마감됨</span>
+          )}
+          {assignment?.waitingRoomEnabled && assignment.status !== 'closed' && (
             assignment.examStartedAt ? (
               <>
                 {assignment.examPausedAt ? (

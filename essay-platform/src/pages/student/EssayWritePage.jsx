@@ -155,7 +155,8 @@ export default function EssayWritePage() {
   // 대기실 화면을 본다. 남은 시간은 멈추고(ExamTimer pausedAtMs), 재개하면 쓰던 답안으로 돌아온다.
   // 일시정지 중에 새로 들어온 학생은 제출물을 만들지 않고 대기실에 머문다.
   const pausedAtMs = getPausedAtMs(assignment)
-  const paused = pausedAtMs != null
+  // 일시정지한 채로 마감하면 대기실이 아니라 마감된(잠긴) 답안 화면을 보여준다.
+  const paused = pausedAtMs != null && assignment?.status !== 'closed'
   const showWaitingRoom = waiting || paused
   const readyToLoadContent = Boolean(assignment) && !needsIdentity && !makeupBlocked && !waiting && !(paused && !submission)
   const contentLoadStartedRef = useRef(false)
