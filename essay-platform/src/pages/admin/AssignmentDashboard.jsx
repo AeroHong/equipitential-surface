@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ref, onValue } from 'firebase/database'
 import { useAuth } from '../../App.jsx'
 import { getAssignment, getPassage, subscribeSubmissions, reopenSubmission, updateAssignment, releaseScores, getAssignmentClassrooms, startExam, pauseExam, resumeExam, openMakeupExam, clearMakeupExam, linkSubmissionToRoster, forceSubmitSubmission, saveTeacherMemo, subscribeTeacherMemos } from '../../services/essay.js'
+import { releaseFeedbackForAssignment } from '../../services/feedback.js'
 import { getTemplate } from '../../services/reportTemplates.js'
 import { rtdb } from '../../firebase.js'
 import AiFlagBadge from '../../components/AiFlagBadge.jsx'
@@ -106,6 +107,7 @@ export default function AssignmentDashboard() {
   const [classroomCounts, setClassroomCounts] = useState({})
   const [fetchingCountFor, setFetchingCountFor] = useState(null) // 지금 조회 중인 courseId
   const [releasingAll, setReleasingAll] = useState(false)
+  const [releasingFeedback, setReleasingFeedback] = useState(false)
   const [startingExam, setStartingExam] = useState(false)
   const [syncingFor, setSyncingFor] = useState(null) // 지금 설명을 다시 동기화 중인 courseId
   // 제출자 이메일 ↔ 소속 수업 매칭 — "명단 불러오기"를 눌러야 채워진다(Classroom 로그인
@@ -234,6 +236,22 @@ export default function AssignmentDashboard() {
       alert('처리 중 오류가 발생했습니다.')
     } finally {
       setReleasingAll(false)
+    }
+  }
+
+  // 포스트잇 피드백 일괄 공개 — 노트가 있는 학생만 바뀐다(services/feedback.js).
+  async function handleReleaseFeedbackAll(released) {
+    if (!window.confirm(`포스트잇 피드백을 학생들에게 ${released ? '공개' : '비공개'} 처리할까요?
+(피드백을 단 학생만 해당됩니다)`)) return
+    setReleasingFeedback(true)
+    try {
+      const count = await releaseFeedbackForAssignment(assignmentId, user.uid, released)
+      alert(count > 0 ? `${count}명의 피드백을 ${released ? '공개' : '비공개'}했습니다.` : '아직 피드백을 단 학생이 없습니다.')
+    } catch (err) {
+      console.error('피드백 공개 상태 일괄 변경 실패:', err)
+      alert('처리 중 오류가 발생했습니다.')
+    } finally {
+      setReleasingFeedback(false)
     }
   }
 
@@ -748,6 +766,24 @@ export default function AssignmentDashboard() {
                 className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40"
               >
                 전체 비공개
+              </button>
+            </>
+          )}
+          {submissions.length > 0 && (
+            <>
+              <button
+                onClick={() => handleReleaseFeedbackAll(true)}
+                disabled={releasingFeedback}
+                className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-40"
+              >
+                📝 피드백 전체 공개
+              </button>
+              <button
+                onClick={() => handleReleaseFeedbackAll(false)}
+                disabled={releasingFeedback}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40"
+              >
+                피드백 비공개
               </button>
             </>
           )}

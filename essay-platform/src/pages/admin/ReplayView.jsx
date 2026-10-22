@@ -3,66 +3,17 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { getAssignment, getSubmission, getReplayLogs, saveGrading, setScoreReleased, getFocusEvents } from '../../services/essay.js'
 import { LEAVE_TYPE_LABELS, DISPLAY_MODE_LABELS, formatDuration } from '../../utils/focusGuard.js'
 import { getTemplate } from '../../services/reportTemplates.js'
-import { sanitizeAnswerHtml, sanitizePassageHtml } from '../../utils/sanitizeHtml.js'
-import { renderMathInElement } from '../../utils/mathExpression.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
 import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
+import AnnotatedAnswer from '../../components/feedback/AnnotatedAnswer.jsx'
 import { subscribeExperimentResult } from '../../services/experiments.js'
+import { saveFeedbackNotes, setFeedbackReleased, subscribeFeedback } from '../../services/feedback.js'
 
-const ANSWER_HTML_CLASS = 'text-[15px] leading-relaxed text-gray-800 whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_table]:table-fixed [&_table]:mx-auto [&_table]:max-w-full [&_table]:border-collapse [&_table]:my-2 [&_td]:border [&_td]:border-gray-300 [&_td]:p-1.5 [&_td]:align-top [&_a]:text-indigo-600 [&_a]:underline'
+// 노트가 없을 때도 같은 배열을 넘겨야 AnnotatedAnswer가 매 렌더마다 형광펜을 다시 씌우지 않는다.
+const EMPTY_NOTES = []
 
 // "섹션 선택" 드롭다운에서 개별 섹션이 아니라 전체를 한 번에 보고 싶을 때 고르는 값.
 const ALL_SECTIONS = '__all__'
-
-/** 왼쪽 패널 — 로그 재생과 무관하게, 지금까지 저장된 최종 답안 전체를 한 번에 보여준다. */
-function FullAnswerView({ usesSections, template, submission, experimentResult }) {
-  // dangerouslySetInnerHTML로 넣은 data-math span은 저장된 그대로(평문 LaTeX 폴백)라 KaTeX로
-  // 다시 그려주지 않으면 수식이 아니라 LaTeX 구문 그대로 보인다 — 렌더 뒤에 한 번 그려준다.
-  const rootRef = useRef(null)
-  useEffect(() => {
-    if (rootRef.current) renderMathInElement(rootRef.current)
-  }, [usesSections, template, submission])
-
-  if (usesSections) {
-    let lastGroup = null
-    const sections = template?.sections || []
-    if (sections.length === 0) return <p className="text-sm text-gray-300">양식을 불러오지 못했습니다.</p>
-    return (
-      <div ref={rootRef} className="space-y-4">
-        {sections.map(sec => {
-          const showGroup = sec.groupLabel && sec.groupLabel !== lastGroup
-          lastGroup = sec.groupLabel
-          const html = sanitizeAnswerHtml(submission?.sections?.[sec.id]?.text || '')
-          return (
-            <React.Fragment key={sec.id}>
-              {showGroup && <h2 className="text-sm font-bold text-indigo-700 border-b border-indigo-100 pb-1.5 pt-2">{sec.groupLabel}</h2>}
-              <div>
-                {sec.heading && <h3 className="text-sm font-bold text-gray-800 mb-1">{sec.heading}</h3>}
-                {sec.promptHtml && (
-                  <details className="mb-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                    <summary className="cursor-pointer select-none">문항 보기</summary>
-                    <div className="passage-rich mt-2 text-sm text-gray-700" dangerouslySetInnerHTML={{ __html: sanitizePassageHtml(sec.promptHtml) }} />
-                  </details>
-                )}
-                {sec.type === 'experiment'
-                  ? (experimentResult
-                    ? <ExperimentReport result={experimentResult} />
-                    : <p className="text-sm text-gray-300">(실험 결과 미제출)</p>)
-                  : html ? <div className={ANSWER_HTML_CLASS} dangerouslySetInnerHTML={{ __html: html }} /> : <p className="text-sm text-gray-300">(작성 내용 없음)</p>}
-              </div>
-            </React.Fragment>
-          )
-        })}
-      </div>
-    )
-  }
-  const html = sanitizeAnswerHtml(submission?.text || '')
-  return (
-    <div ref={rootRef}>
-      {html ? <div className={ANSWER_HTML_CLASS} dangerouslySetInnerHTML={{ __html: html }} /> : <p className="text-sm text-gray-300">(작성 내용 없음)</p>}
-    </div>
-  )
-}
 
 /** essay_calculator("서술형 평가-문항") 전용 채점 패널 — 문항별 점수 입력 + 총점 + 공개 토글.
  * 점수 저장과 공개는 서로 다른 동작이라(services/essay.js의 saveGrading/setScoreReleased)
@@ -251,6 +202,50 @@ export default function ReplayView() {
     return subscribeExperimentResult(assignmentId, uid, setExperimentResult)
   }, [hasExperiment, assignmentId, uid])
 
+  // 포스트잇 피드백 — 교사만 쓰고, 학생은 "피드백 공개" 뒤에만 읽는다(services/feedback.js).
+  // 피드백 모드에선 재생 패널을 접고 답안을 넓게 펴서 오른쪽 여백에 노트를 띄운다.
+  const [feedback, setFeedback] = useState(null)
+  const [feedbackMode, setFeedbackMode] = useState(false)
+  const [feedbackError, setFeedbackError] = useState('')
+  const [releasingFeedback, setReleasingFeedback] = useState(false)
+  useEffect(() => subscribeFeedback(
+    `${assignmentId}__${uid}`,
+    setFeedback,
+    () => setFeedbackError('피드백을 불러오지 못했습니다.')
+  ), [assignmentId, uid])
+  const notes = feedback?.notes || EMPTY_NOTES
+  const feedbackReleased = Boolean(feedback?.released)
+  // 연달아 고쳐도(만들자마자 색 바꾸기 등) 앞의 변경이 사라지지 않게 최신 노트를 ref로 잡는다.
+  const notesRef = useRef(notes)
+  notesRef.current = notes
+
+  function persistNotes(next) {
+    notesRef.current = next
+    setFeedback(f => ({ ...(f || {}), notes: next }))
+    setFeedbackError('')
+    saveFeedbackNotes(submission, next).catch(err => {
+      console.error('피드백 저장 실패:', err)
+      setFeedbackError('피드백 저장에 실패했습니다. 다시 시도해주세요.')
+    })
+  }
+  const handleCreateNote = note => persistNotes([...notesRef.current, note])
+  const handleUpdateNote = (id, patch) => persistNotes(notesRef.current.map(n => (n.id === id ? { ...n, ...patch } : n)))
+  const handleDeleteNote = id => persistNotes(notesRef.current.filter(n => n.id !== id))
+
+  async function handleToggleFeedbackRelease() {
+    const next = !feedbackReleased
+    setReleasingFeedback(true)
+    try {
+      await setFeedbackReleased(submission, next)
+      setFeedback(f => ({ ...(f || {}), released: next }))
+    } catch (err) {
+      console.error('피드백 공개 변경 실패:', err)
+      alert('피드백 공개 상태를 바꾸지 못했습니다.')
+    } finally {
+      setReleasingFeedback(false)
+    }
+  }
+
   useEffect(() => {
     const subId = `${assignmentId}__${uid}`
     Promise.all([getAssignment(assignmentId), getSubmission(subId), getReplayLogs(subId)])
@@ -373,12 +368,18 @@ export default function ReplayView() {
         ) : !submission ? (
           <div className="text-center py-16 text-gray-400">제출물을 찾을 수 없습니다.</div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className={`grid grid-cols-1 gap-6 ${feedbackMode ? '' : 'lg:grid-cols-2'}`}>
             {/* 왼쪽: 전체 작성 내용 한눈에 보기 + 내보내기 */}
             <section className="print:col-span-2">
               <div className="print:hidden flex items-center justify-between mb-3">
                 <h2 className="text-sm font-bold text-gray-700">전체 작성 내용</h2>
                 <div className="flex gap-2">
+                  <button
+                    onClick={() => setFeedbackMode(m => !m)}
+                    className={`text-xs rounded-lg px-3 py-1.5 font-semibold transition-colors ${feedbackMode ? 'bg-gray-900 text-white hover:bg-gray-700' : 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'}`}
+                  >
+                    {feedbackMode ? '✓ 피드백 달기 끝내기' : '📝 피드백 달기'}
+                  </button>
                   <button
                     onClick={handleExportDocx}
                     disabled={exportingDocx}
@@ -407,15 +408,41 @@ export default function ReplayView() {
                 </div>
               )}
               <div className="bg-white rounded-2xl border border-gray-200 p-5 print:border-0 print:p-0">
-                <FullAnswerView
- usesSections={usesSections} template={template} submission={submission} experimentResult={experimentResult} />
+                {(feedbackMode || notes.length > 0) && (
+                  <div className="print:hidden mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-amber-50/70 px-3 py-2 text-xs text-amber-900">
+                    <span className="font-semibold">📝 포스트잇 {notes.length}개</span>
+                    {feedbackMode && <span className="text-amber-800/70">문장을 드래그하거나 그림·표·수식을 클릭해 붙이세요. 포스트잇 윗줄을 끌면 이동, 오른쪽 아래 모서리로 크기 조절.</span>}
+                    {feedbackError && <span className="text-red-600">{feedbackError}</span>}
+                    <span className={`ml-auto rounded-full px-2 py-0.5 font-medium ${feedbackReleased ? 'bg-green-100 text-green-700' : 'bg-white text-gray-500'}`}>
+                      {feedbackReleased ? '학생에게 공개됨' : '학생에게 비공개'}
+                    </span>
+                    <button
+                      onClick={handleToggleFeedbackRelease}
+                      disabled={releasingFeedback || (!feedbackReleased && notes.length === 0)}
+                      className={`rounded-lg px-3 py-1 font-medium transition-colors disabled:opacity-40 ${feedbackReleased ? 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                    >
+                      {releasingFeedback ? '변경 중...' : feedbackReleased ? '공개 취소' : '피드백 공개'}
+                    </button>
+                  </div>
+                )}
+                <AnnotatedAnswer
+                  usesSections={usesSections}
+                  template={template}
+                  submission={submission}
+                  experimentResult={experimentResult}
+                  notes={notes}
+                  editable={feedbackMode}
+                  onCreate={handleCreateNote}
+                  onUpdate={handleUpdateNote}
+                  onDelete={handleDeleteNote}
+                />
               </div>
               {isGradable && <GradingPanel template={template} submission={submission} onSaved={handleGradingSaved} />}
               <FocusEventsPanel submission={submission} events={focusEvents} />
             </section>
 
             {/* 오른쪽: 기존 로그 점검(리플레이) 기능 */}
-            <section className="print:hidden">
+            <section className={`print:hidden ${feedbackMode ? 'hidden' : ''}`}>
               <h2 className="text-sm font-bold text-gray-700 mb-3">작성 과정 로그</h2>
               {template?.sections?.length > 0 && (
                 <div className="mb-4">

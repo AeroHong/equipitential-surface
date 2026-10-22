@@ -80,3 +80,19 @@ math-field::part(ui-menu-container) {
 .student-math--block { display: block; width: fit-content; max-width: 100%; margin: 0.7em auto; text-align: center; }
 [contenteditable="true"] .student-math { border-radius: 0.35rem; outline: 1px solid transparent; }
 [contenteditable="true"] .student-math:hover, [contenteditable="true"] .student-math:focus { outline-color: #a5b4fc; background: #eef2ff; }
+
+/* 포스트잇 피드백 형광펜(utils/feedbackAnchors.js applyHighlights) — 색 키는 services/feedback.js
+   FEEDBACK_COLORS, 노트 색은 components/feedback/StickyNote.jsx와 맞춘다. */
+.fb-mark { --fb-hl: rgba(255, 226, 64, 0.45); --fb-pin: #e0b400; background: var(--fb-hl); color: inherit; border-radius: 2px; padding: 0 1px; transition: box-shadow .15s, background-color .15s; }
+.fb-mark[data-color="pink"] { --fb-hl: rgba(255, 128, 176, 0.32); --fb-pin: #e85a8f; }
+.fb-mark[data-color="blue"] { --fb-hl: rgba(84, 166, 255, 0.28); --fb-pin: #3b8fe0; }
+.fb-mark[data-color="green"] { --fb-hl: rgba(104, 196, 84, 0.30); --fb-pin: #4fa846; }
+.fb-mark[data-color="purple"] { --fb-hl: rgba(156, 116, 255, 0.28); --fb-pin: #8a5cf0; }
+.fb-mark.fb-mark--active { box-shadow: 0 0 0 2px var(--fb-pin); }
+.fb-mark[data-note-num]::after {
+  content: attr(data-note-num);
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.15em; height: 1.15em; margin-left: 2px; padding: 0 .25em;
+  border-radius: 999px; background: var(--fb-pin); color: #fff;
+  font-size: .62em; font-weight: 700; line-height: 1; vertical-align: super;
+}

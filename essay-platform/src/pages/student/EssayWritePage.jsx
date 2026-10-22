@@ -26,7 +26,12 @@ import { useFocusGuard } from '../../hooks/useFocusGuard.js'
 import { isFocusGuardActive, detectDisplayMode } from '../../utils/focusGuard.js'
 import FocusGuardOverlay from '../../components/FocusGuardOverlay.jsx'
 import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
+import AnnotatedAnswer from '../../components/feedback/AnnotatedAnswer.jsx'
+import { subscribeFeedback } from '../../services/feedback.js'
 import { subscribeExperimentResult, buildExperimentUrl, EXPERIMENT_MODES } from '../../services/experiments.js'
+
+// 피드백이 없을 때도 같은 배열을 넘겨 AnnotatedAnswer가 매 렌더마다 형광펜을 다시 씌우지 않게 한다.
+const EMPTY_NOTES = []
 
 export default function EssayWritePage() {
   const { assignmentId } = useParams()
@@ -265,6 +270,17 @@ export default function EssayWritePage() {
     })
   }, [submissionId])
 
+  // 포스트잇 피드백 — 교사가 공개(feedbackReleased)한 뒤에만 구독한다. 공개 전엔 규칙상 읽을 수
+  // 없어서, 미리 구독하면 권한 오류로 구독이 끊긴 채 공개돼도 안 보이게 된다.
+  const feedbackReleased = Boolean(submission?.feedbackReleased)
+  const [feedback, setFeedback] = useState(null)
+  useEffect(() => {
+    if (!submissionId || !feedbackReleased) { setFeedback(null); return }
+    return subscribeFeedback(submissionId, setFeedback, () => setFeedback(null))
+  }, [submissionId, feedbackReleased])
+  const feedbackNotes = (feedbackReleased && feedback?.released && feedback.notes) || EMPTY_NOTES
+  const [feedbackView, setFeedbackView] = useState(null) // null이면 잠긴 답안은 피드백, 작성 중이면 편집기
+
   // 제한시간: 교사가 다시 열어준 학생(timeLimitWaived)은 제외 — services/essay.js의 reopenSubmission 참고.
   const deadlineMs = submission && !submission.timeLimitWaived
     ? getExamDeadlineMs(assignment, submission, loadedAtRef.current)
@@ -491,6 +507,7 @@ export default function EssayWritePage() {
   const sectionScores = showScores
     ? Object.fromEntries((template?.sections || []).map(sec => [sec.id, { score: submission.sections?.[sec.id]?.score ?? null, maxScore: sec.maxScore ?? null }]))
     : null
+  const showFeedbackView = feedbackNotes.length > 0 && (feedbackView ?? (locked ? 'feedback' : 'editor')) === 'feedback'
   const totalMaxScore = (template?.sections || []).reduce((sum, s) => sum + (s.maxScore || 0), 0)
 
   return (
@@ -632,7 +649,34 @@ export default function EssayWritePage() {
                   />
                 )}
 
-                {usesSections ? (
+                {feedbackNotes.length > 0 && (
+                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <span className="font-semibold">📝 선생님 피드백 {feedbackNotes.length}개</span>
+                    <div className="ml-auto flex rounded-lg bg-white p-0.5 text-xs shadow-sm">
+                      {[['feedback', '피드백 보기'], ['editor', '내 답안']].map(([view, label]) => (
+                        <button
+                          key={view}
+                          type="button"
+                          onClick={() => setFeedbackView(view)}
+                          className={`rounded-md px-3 py-1 font-medium transition-colors ${showFeedbackView === (view === 'feedback') ? 'bg-amber-500 text-white' : 'text-amber-800 hover:bg-amber-50'}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {showFeedbackView ? (
+                  <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                    <AnnotatedAnswer
+                      usesSections={usesSections}
+                      template={template}
+                      submission={submission}
+                      experimentResult={experimentResult}
+                      notes={feedbackNotes}
+                    />
+                  </div>
+                ) : usesSections ? (
                   <StructuredReportEditor
                     template={template}
                     sections={sections}

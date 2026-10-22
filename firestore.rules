@@ -80,6 +80,27 @@ service cloud.firestore {
         request.resource.data.teacherUid == request.auth.uid;
     }
 
+    // 포스트잇 피드백(학생별) — 문서 ID는 제출물 ID와 같다. 제출물 하위 컬렉션은 학생이 항상 읽을
+    // 수 있고 교사는 쓸 수 없어서 별도 컬렉션에 둔다. 학생은 교사가 공개(released)한 뒤에만 읽는다.
+    match /essayFeedback/{id} {
+      allow get: if request.auth != null &&
+        (!exists(/databases/$(database)/documents/essayFeedback/$(id)) ||
+          isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid) ||
+          (resource.data.studentUid == request.auth.uid && resource.data.get('released', false) == true));
+      // 교사는 where('teacherUid','==',본인uid) 쿼리로만(services/feedback.js)
+      allow list: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
+      // 그 제출물의 담당 교사만 만들 수 있다(다른 교사 학생에게 피드백을 붙이지 못하게).
+      allow create: if request.auth != null && (isAdmin() ||
+        (isTeacher() && request.resource.data.teacherUid == request.auth.uid &&
+          get(/databases/$(database)/documents/essaySubmissions/$(id)).data.teacherUid == request.auth.uid));
+      allow update: if request.auth != null && (isAdmin() ||
+        (isTeacher() && resource.data.teacherUid == request.auth.uid &&
+          request.resource.data.teacherUid == request.auth.uid));
+      allow delete: if request.auth != null &&
+        (isAdmin() || (isTeacher() && resource.data.teacherUid == request.auth.uid));
+    }
+
     // 구조화된 응답 템플릿(탐구보고서 등) — 지문과 똑같은 소유권 패턴
     match /reportTemplates/{id} {
       allow read: if request.auth != null;
