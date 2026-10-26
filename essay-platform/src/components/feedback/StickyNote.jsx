@@ -34,7 +34,7 @@ function formatTime(ms) {
 }
 
 /** 노트 글의 $…$(문장 안)·$$…$$(한 줄) 구간을 KaTeX로 그린다. 나머지는 그냥 글자. */
-function NoteText({ text }) {
+export function NoteText({ text }) {
   const parts = []
   const re = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g
   let last = 0

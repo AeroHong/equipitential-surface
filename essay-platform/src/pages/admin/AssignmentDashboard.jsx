@@ -245,7 +245,7 @@ export default function AssignmentDashboard() {
 (피드백을 단 학생만 해당됩니다)`)) return
     setReleasingFeedback(true)
     try {
-      const count = await releaseFeedbackForAssignment(assignmentId, user.uid, released)
+      const count = await releaseFeedbackForAssignment(assignmentId, user.uid, released, Object.fromEntries(submissions.map(s => [s.id, s])))
       alert(count > 0 ? `${count}명의 피드백을 ${released ? '공개' : '비공개'}했습니다.` : '아직 피드백을 단 학생이 없습니다.')
     } catch (err) {
       console.error('피드백 공개 상태 일괄 변경 실패:', err)

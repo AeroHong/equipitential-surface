@@ -72,7 +72,11 @@ export function textAnchorFromRange(container, range) {
  * @returns {{start:number, end:number}|null}
  */
 export function locateTextAnchor(container, anchor) {
-  const full = countedText(container)
+  return locateInText(countedText(container), anchor)
+}
+
+/** locateTextAnchor의 글자열 버전 — DOM 없이(수정 비교의 토큰 글자열 등) 같은 규칙으로 찾는다. */
+export function locateInText(full, anchor) {
   const { start, end, quote } = anchor
   if (full.slice(start, end) === quote) return { start, end }
   if (!quote) return null
@@ -147,6 +151,16 @@ export function findAnchorElement(container, target) {
 const clamp01 = v => Math.min(1, Math.max(0, v))
 
 /**
+ * 그림·수식의 내용 식별자 — 순서(index)만으로 찾으면 학생이 앞 그림을 지웠을 때 핀이 다음 그림으로
+ * 옮겨 붙는다. 그림은 src, 수식은 data-math 값. 표·실험은 식별할 값이 없어 순서로만 찾는다.
+ */
+export function elementKey(kind, el) {
+  if (kind === 'img') return el.getAttribute('src') || null
+  if (kind === 'math') return el.getAttribute('data-math') || null
+  return null
+}
+
+/**
  * 클릭 지점 → 요소 앵커
  * @returns {{type:'element', kind:string, index:number, x:number, y:number}|null}
  */
@@ -159,12 +173,25 @@ export function elementAnchorFromPoint(container, target, clientX, clientY) {
   const rect = el.getBoundingClientRect()
   const x = rect.width ? clamp01((clientX - rect.left) / rect.width) : 0.5
   const y = rect.height ? clamp01((clientY - rect.top) / rect.height) : 0.5
-  return { type: 'element', kind, index, x, y }
+  const key = elementKey(kind, el)
+  return { type: 'element', kind, index, x, y, ...(key ? { key } : {}) }
 }
 
-/** 저장된 요소 앵커가 가리키는 요소. 없어졌으면 null. */
+/**
+ * 저장된 요소 앵커가 가리키는 요소. 식별자(key)가 있으면 같은 내용의 요소 중 원래 순서에 가장 가까운
+ * 것을, 없으면(예전 노트·표) 순서로 찾는다. 없어졌으면 null.
+ */
 export function resolveElementAnchor(container, anchor) {
   const entry = ELEMENT_KINDS.find(k => k.kind === anchor.kind)
   if (!entry) return null
-  return container.querySelectorAll(entry.selector)[anchor.index] || null
+  const els = [...container.querySelectorAll(entry.selector)]
+  if (!anchor.key) return els[anchor.index] || null
+  let best = null
+  let bestDist = Infinity
+  els.forEach((el, i) => {
+    if (elementKey(anchor.kind, el) !== anchor.key) return
+    const d = Math.abs(i - (anchor.index ?? 0))
+    if (d < bestDist) { best = el; bestDist = d }
+  })
+  return best
 }

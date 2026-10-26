@@ -63,12 +63,16 @@ function newNoteId() {
  * 노트는 답안 내용에 고정된다(utils/feedbackAnchors.js) — 문장은 형광펜, 그림·표·수식·실험 보고서는
  * 번호 핀. 넓은 화면에선 노트를 앵커 높이에 맞춰 오른쪽 여백에, 좁은 화면에선 섹션 아래에 목록으로.
  *
+ * content를 넘기면 submission 대신 그 답안을 그린다 — 학생 피드백 화면은 공개 시점 답안(services/feedback.js
+ * answerSnapshot)을 넘겨, 학생이 답안을 고쳐도 포스트잇이 피드백 받은 그 자리에 남게 한다.
+ *
  * @param {{usesSections:boolean, template:object|null, submission:object|null, experimentResult?:object|null,
+ *   content?:{text:string, sections:Object<string,string>}|null,
  *   notes?:Array<object>, editable?:boolean, onCreate?:(note:object)=>void,
  *   onUpdate?:(id:string, patch:object)=>void, onDelete?:(id:string)=>void}} props
  */
 export default function AnnotatedAnswer({
-  usesSections, template, submission, experimentResult,
+  usesSections, template, submission, experimentResult, content = null,
   notes = [], editable = false, onCreate, onUpdate, onDelete
 }) {
   const rootRef = useRef(null)
@@ -204,7 +208,7 @@ export default function AnnotatedAnswer({
   // dangerouslySetInnerHTML로 넣은 data-math span을 KaTeX로 그린다(안 그리면 LaTeX 구문 그대로 보임).
   useLayoutEffect(() => {
     if (contentRef.current) renderMathInElement(contentRef.current)
-  }, [usesSections, template, submission])
+  }, [usesSections, template, submission, content])
 
   // 형광펜 다시 씌우기 → 배치. 노트 글자만 바뀐 경우엔 다시 씌울 필요가 없어서 위치·색으로만 비교한다
   // (매 렌더마다 걷어냈다 씌우면 hover 강조가 풀린다).
@@ -224,7 +228,7 @@ export default function AnnotatedAnswer({
     }
     relayout()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlightSig, usesSections, template, submission, relayout])
+  }, [highlightSig, usesSections, template, submission, content, relayout])
 
   // 노트 글자가 바뀌면(높이 변화) 다시 배치
   useLayoutEffect(() => { relayout() }, [notes, relayout])
@@ -438,7 +442,7 @@ export default function AnnotatedAnswer({
           {sections.map(sec => {
             const showGroup = sec.groupLabel && sec.groupLabel !== lastGroup
             lastGroup = sec.groupLabel
-            const html = sanitizeAnswerHtml(submission?.sections?.[sec.id]?.text || '')
+            const html = sanitizeAnswerHtml((content ? content.sections?.[sec.id] : submission?.sections?.[sec.id]?.text) || '')
             return (
               <React.Fragment key={sec.id}>
                 {showGroup && <h2 className="text-sm font-bold text-indigo-700 border-b border-indigo-100 pb-1.5 pt-2">{sec.groupLabel}</h2>}
@@ -465,7 +469,7 @@ export default function AnnotatedAnswer({
   } else {
     body = (
       <div>
-        {renderHtml(TEXT_KEY, sanitizeAnswerHtml(submission?.text || ''))}
+        {renderHtml(TEXT_KEY, sanitizeAnswerHtml((content ? content.text : submission?.text) || ''))}
         {renderInlineNotes(TEXT_KEY)}
       </div>
     )

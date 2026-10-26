@@ -71,11 +71,18 @@ describe('feedbackAnchors', () => {
     const imgs = c.querySelectorAll('img')
     imgs[1].getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 100 })
     const a = elementAnchorFromPoint(c, imgs[1], 150, 100)
-    expect(a).toEqual({ type: 'element', kind: 'img', index: 1, x: 0.25, y: 0.5 })
+    expect(a).toEqual({ type: 'element', kind: 'img', index: 1, x: 0.25, y: 0.5, key: 'b.png' })
     expect(resolveElementAnchor(c, a)).toBe(imgs[1])
 
     const td = c.querySelector('td')
     expect(elementAnchorFromPoint(c, td, 0, 0).kind).toBe('table')
     expect(resolveElementAnchor(c, { kind: 'img', index: 5 })).toBeNull()
+  })
+
+  it('앞 그림이 지워져도 같은 그림을 찾고, 그 그림이 없어지면 null(예전 노트는 순서로)', () => {
+    const c = make('<p><img src="b.png"></p><p><img src="c.png"></p>')
+    expect(resolveElementAnchor(c, { kind: 'img', index: 1, key: 'b.png' })).toBe(c.querySelector('img[src="b.png"]'))
+    expect(resolveElementAnchor(c, { kind: 'img', index: 0, key: 'a.png' })).toBeNull()
+    expect(resolveElementAnchor(c, { kind: 'img', index: 1 })).toBe(c.querySelector('img[src="c.png"]'))
   })
 })

@@ -8,6 +8,24 @@ import { db } from '../firebase.js'
 /** 노트 색 — StickyNote.jsx·index.css(.fb-mark[data-color])와 같은 키를 쓴다. */
 export const FEEDBACK_COLORS = ['yellow', 'pink', 'blue', 'green', 'purple']
 
+/**
+ * 피드백 공개 순간의 답안(baseline). 학생 피드백 화면은 이 위에 포스트잇을 그려서 학생이 답안을 고쳐도
+ * 위치가 흐트러지지 않고, 교사는 이것과 지금 답안을 비교해 피드백을 어떻게 반영했는지 본다.
+ * 공개할 때마다 새로 찍는다(다시 공개 = 새 피드백 라운드).
+ */
+export function answerSnapshot(submission) {
+  const sections = Object.fromEntries(
+    Object.entries(submission?.sections || {}).map(([id, v]) => [id, v?.text || ''])
+  )
+  return { text: submission?.text || '', sections }
+}
+
+function releaseFields(submission, released) {
+  return released
+    ? { released, releasedAt: serverTimestamp(), baseline: answerSnapshot(submission), baselineAt: serverTimestamp() }
+    : { released, releasedAt: null }
+}
+
 function ownership(submission) {
   return {
     assignmentId: submission.assignmentId,
@@ -49,8 +67,7 @@ export async function setFeedbackReleased(submission, released) {
   const batch = writeBatch(db)
   batch.set(doc(db, 'essayFeedback', submission.id), {
     ...ownership(submission),
-    released,
-    releasedAt: released ? serverTimestamp() : null
+    ...releaseFields(submission, released)
   }, { merge: true })
   batch.update(doc(db, 'essaySubmissions', submission.id), { feedbackReleased: released })
   await batch.commit()
@@ -58,9 +75,10 @@ export async function setFeedbackReleased(submission, released) {
 
 /**
  * 배정 전체 피드백 공개/비공개 — 노트가 하나라도 있는 학생만 바꾼다.
+ * @param {Object<string, object>} submissionsById 공개 시점 답안(baseline)을 찍을 제출물들(대시보드가 구독 중인 것)
  * @returns {Promise<number>} 바꾼 학생 수
  */
-export async function releaseFeedbackForAssignment(assignmentId, teacherUid, released) {
+export async function releaseFeedbackForAssignment(assignmentId, teacherUid, released, submissionsById = {}) {
   const snap = await getDocs(query(
     collection(db, 'essayFeedback'),
     where('teacherUid', '==', teacherUid),
@@ -71,7 +89,8 @@ export async function releaseFeedbackForAssignment(assignmentId, teacherUid, rel
   for (let i = 0; i < targets.length; i += 200) {
     const batch = writeBatch(db)
     for (const d of targets.slice(i, i + 200)) {
-      batch.update(d.ref, { released, releasedAt: released ? serverTimestamp() : null })
+      const sub = submissionsById[d.id]
+      batch.update(d.ref, sub ? releaseFields(sub, released) : { released, releasedAt: released ? serverTimestamp() : null })
       batch.update(doc(db, 'essaySubmissions', d.id), { feedbackReleased: released })
     }
     await batch.commit()

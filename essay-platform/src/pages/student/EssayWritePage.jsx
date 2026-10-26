@@ -280,6 +280,10 @@ export default function EssayWritePage() {
   }, [submissionId, feedbackReleased])
   const feedbackNotes = (feedbackReleased && feedback?.released && feedback.notes) || EMPTY_NOTES
   const [feedbackView, setFeedbackView] = useState(null) // null이면 잠긴 답안은 피드백, 작성 중이면 편집기
+  // 피드백은 공개 시점 답안 위에 그린다 — 재열기 후 고쳐도 포스트잇이 피드백 받은 자리에 남는다.
+  // baseline이 없는 예전 공개분은 지금 답안 위에.
+  const feedbackBaseline = feedbackNotes.length > 0 ? feedback?.baseline || null : null
+  const feedbackBaselineDate = feedback?.baselineAt?.toDate?.() || null
 
   // 제한시간: 교사가 다시 열어준 학생(timeLimitWaived)은 제외 — services/essay.js의 reopenSubmission 참고.
   const deadlineMs = submission && !submission.timeLimitWaived
@@ -668,10 +672,17 @@ export default function EssayWritePage() {
                 )}
                 {showFeedbackView ? (
                   <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                    {feedbackBaseline && (
+                      <p className="mb-3 text-xs text-gray-500">
+                        선생님이 피드백한 답안{feedbackBaselineDate ? ` (${feedbackBaselineDate.getMonth() + 1}/${feedbackBaselineDate.getDate()})` : ''}
+                        {!locked && ' — 고치는 건 "내 답안"에서 하세요.'}
+                      </p>
+                    )}
                     <AnnotatedAnswer
                       usesSections={usesSections}
                       template={template}
                       submission={submission}
+                      content={feedbackBaseline}
                       experimentResult={experimentResult}
                       notes={feedbackNotes}
                     />

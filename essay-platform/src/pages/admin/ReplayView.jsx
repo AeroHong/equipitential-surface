@@ -6,6 +6,7 @@ import { getTemplate } from '../../services/reportTemplates.js'
 import ReplayPlayer from '../../components/ReplayPlayer.jsx'
 import ExperimentReport from '../../components/experiment/ExperimentReport.jsx'
 import AnnotatedAnswer from '../../components/feedback/AnnotatedAnswer.jsx'
+import RevisionCompare from '../../components/feedback/RevisionCompare.jsx'
 import { subscribeExperimentResult } from '../../services/experiments.js'
 import { saveFeedbackNotes, setFeedbackReleased, subscribeFeedback } from '../../services/feedback.js'
 
@@ -271,6 +272,14 @@ export default function ReplayView() {
   const usesSections = assignment?.responseType === 'structured' || assignment?.responseType === 'essay_calculator'
   const isGradable = assignment?.responseType === 'essay_calculator'
 
+  // 피드백 공개 시점 답안(baseline)과 지금 답안이 다르면 "수정 비교"를 켤 수 있다(재열기 후 학생이 고친 경우).
+  const baseline = feedback?.baseline || null
+  const revised = Boolean(baseline && submission) && (usesSections
+    ? (template?.sections || []).some(s => (baseline.sections?.[s.id] || '') !== (submission.sections?.[s.id]?.text || ''))
+    : (baseline.text || '') !== (submission.text || ''))
+  const [compareMode, setCompareMode] = useState(false)
+  const showCompare = compareMode && revised && !feedbackMode
+
   function handleGradingSaved(sectionScoreUpdates, totalScore, releasedOverride) {
     setSubmission(s => {
       if (!s) return s
@@ -375,7 +384,7 @@ export default function ReplayView() {
                 <h2 className="text-sm font-bold text-gray-700">전체 작성 내용</h2>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setFeedbackMode(m => !m)}
+                    onClick={() => { setFeedbackMode(m => !m); setCompareMode(false) }}
                     className={`text-xs rounded-lg px-3 py-1.5 font-semibold transition-colors ${feedbackMode ? 'bg-gray-900 text-white hover:bg-gray-700' : 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'}`}
                   >
                     {feedbackMode ? '✓ 피드백 달기 끝내기' : '📝 피드백 달기'}
@@ -408,11 +417,20 @@ export default function ReplayView() {
                 </div>
               )}
               <div className="bg-white rounded-2xl border border-gray-200 p-5 print:border-0 print:p-0">
-                {(feedbackMode || notes.length > 0) && (
+                {(feedbackMode || notes.length > 0 || revised) && (
                   <div className="print:hidden mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-amber-50/70 px-3 py-2 text-xs text-amber-900">
                     <span className="font-semibold">📝 포스트잇 {notes.length}개</span>
                     {feedbackMode && <span className="text-amber-800/70">문장을 드래그하거나 그림·표·수식을 클릭해 붙이세요. 포스트잇 윗줄을 끌면 이동, 오른쪽 아래 모서리로 크기 조절.</span>}
                     {feedbackError && <span className="text-red-600">{feedbackError}</span>}
+                    {revised && !feedbackMode && (
+                      <button
+                        onClick={() => setCompareMode(m => !m)}
+                        className={`rounded-lg px-3 py-1 font-semibold transition-colors ${compareMode ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50'}`}
+                        title="피드백 공개 이후 학생이 고친 내용"
+                      >
+                        {compareMode ? '← 답안 보기' : '🔍 수정 비교'}
+                      </button>
+                    )}
                     <span className={`ml-auto rounded-full px-2 py-0.5 font-medium ${feedbackReleased ? 'bg-green-100 text-green-700' : 'bg-white text-gray-500'}`}>
                       {feedbackReleased ? '학생에게 공개됨' : '학생에게 비공개'}
                     </span>
@@ -425,17 +443,28 @@ export default function ReplayView() {
                     </button>
                   </div>
                 )}
-                <AnnotatedAnswer
-                  usesSections={usesSections}
-                  template={template}
-                  submission={submission}
-                  experimentResult={experimentResult}
-                  notes={notes}
-                  editable={feedbackMode}
-                  onCreate={handleCreateNote}
-                  onUpdate={handleUpdateNote}
-                  onDelete={handleDeleteNote}
-                />
+                {showCompare ? (
+                  <RevisionCompare
+                    usesSections={usesSections}
+                    template={template}
+                    baseline={baseline}
+                    baselineAt={feedback?.baselineAt?.toDate?.() || null}
+                    submission={submission}
+                    notes={notes}
+                  />
+                ) : (
+                  <AnnotatedAnswer
+                    usesSections={usesSections}
+                    template={template}
+                    submission={submission}
+                    experimentResult={experimentResult}
+                    notes={notes}
+                    editable={feedbackMode}
+                    onCreate={handleCreateNote}
+                    onUpdate={handleUpdateNote}
+                    onDelete={handleDeleteNote}
+                  />
+                )}
               </div>
               {isGradable && <GradingPanel template={template} submission={submission} onSaved={handleGradingSaved} />}
               <FocusEventsPanel submission={submission} events={focusEvents} />
